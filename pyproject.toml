@@ -1,0 +1,30 @@
+[project]
+name = "defringe-ai"
+version = "0.0.1"
+description = "AI-native image tooling: deterministic raster transforms exposed as MCP tools a vision model can call and self-correct against."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "lbapplications" }]
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "numpy>=2.0",
+    "pillow>=10.0",
+    "opencv-python-headless>=4.9",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+# ML background removal for photographic inputs where luminance keying fails (v1).
+ml = ["rembg>=2.0"]
+
+[project.scripts]
+defringe-ai = "defringe_ai.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/defringe_ai"]

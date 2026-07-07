@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.uv/
+uv.lock
+
+# defringe-ai output dir
+out/
+*.tmp.png
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
