@@ -98,6 +98,9 @@ _CANVAS = """<!doctype html><meta charset=utf-8><title>defringe-ai · edit</titl
 const canvas = document.getElementById('canvas');
 const els = new Map();          // name -> {node, img, cap, handle}
 let act = null;                 // {name, node, mode:'move'|'resize', ...} while interacting
+let topZ = 10;                  // click/interact raises an asset above the rest
+
+function surface(node){ node.style.zIndex = ++topZ; }
 
 function baseW(a){ return a.w >= a.h ? 200 : 200 * (a.w / a.h); }
 
@@ -130,11 +133,13 @@ function paint(a) {
 
 function startMove(name, e) {
   const rec = els.get(name), r = rec.node.getBoundingClientRect();
+  surface(rec.node);            // clicking an asset brings it to the front
   act = {name, node: rec.node, mode:'move', dx: e.clientX - r.left, dy: e.clientY - r.top};
   rec.node.classList.add('busy'); e.preventDefault();
 }
 function startResize(name, e) {
   const rec = els.get(name), r = rec.node.getBoundingClientRect();
+  surface(rec.node);
   act = {name, node: rec.node, img: rec.img, mode:'resize', left: r.left,
          base: baseW({w:+rec.node.dataset.w, h:+rec.node.dataset.h})};
   rec.node.classList.add('busy'); e.preventDefault(); e.stopPropagation();
