@@ -44,6 +44,10 @@ class Workspace:
         if not os.path.exists(src_path):
             raise ValueError(f"no such asset: {src_path!r}")
         name = name or os.path.splitext(os.path.basename(src_path))[0]
+        # stagger new assets across the canvas so they don't land on top of each other
+        n = len(cls.list_all(home))
+        canvas = {"x": 40 + (n % 4) * 250, "y": 40 + (n // 4) * 250}
+
         root = os.path.join(home, name)
         if os.path.exists(root):
             shutil.rmtree(root)
@@ -63,6 +67,7 @@ class Workspace:
                 "source": os.path.relpath(local_src, root),
                 "steps": [{"op": "open", "params": {}, "file": step_file, "ts": _now()}],
                 "head": 0,
+                "canvas": canvas,
             }
         )
         _set_active(home, name)
@@ -146,6 +151,13 @@ class Workspace:
         self._write(m)
         return self.status()
 
+    def move(self, x: int, y: int) -> dict:
+        """Reposition this asset on the shared canvas (agent- or human-driven)."""
+        m = self._read()
+        m["canvas"] = {"x": int(x), "y": int(y)}
+        self._write(m)
+        return self.status()
+
     def export(self, dest: str) -> dict:
         """Write the current (HEAD) image out to an arbitrary path — the deliverable."""
         os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
@@ -176,6 +188,7 @@ class Workspace:
             "width": w,
             "height": h,
             "chain": [s["op"] for s in m["steps"]],
+            "canvas": m.get("canvas", {"x": 40, "y": 40}),
         }
 
     # --- io ----------------------------------------------------------------

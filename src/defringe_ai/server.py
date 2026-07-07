@@ -123,6 +123,13 @@ def collapse(workspace: str = "") -> dict:
 
 
 @mcp.tool()
+def move(x: int, y: int, workspace: str = "") -> dict:
+    """Reposition an asset on the shared canvas (top-left x,y in px). This is how I
+    arrange assets on the edit screen; a human can also drag them there."""
+    return Workspace.resolve(workspace, HOME).move(x, y)
+
+
+@mcp.tool()
 def export(dest: str, workspace: str = "") -> dict:
     """Write the current image out to a path — the finished deliverable."""
     return Workspace.resolve(workspace, HOME).export(dest)

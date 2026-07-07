@@ -107,7 +107,16 @@ dark+light checkerboard to judge alpha edges).
 | `upscale` | lanczos3 resample + gentle sharpen (holds linework; adds no real detail) |
 | `silhouette_mask` | emit just the alpha shape for CSS `mask-image` tricks |
 
-**Workspace controls:** `undo`, `redo`, `status`, `collapse`, `export`.
+**Workspace controls:** `undo`, `redo`, `status`, `collapse`, `export`, `move` (place an
+asset on the canvas), `list_workspaces`.
+
+### The edit screen
+
+`serve --preview` opens a **canvas** at the preview URL: every asset's current image,
+placed at its `(x,y)`, on a checkerboard. Assets are movable **by the agent** (the
+`move` tool arranges the layout while it works) and **by you** (drag them — the drop
+persists back to the workspace). It polls live, so agent moves and edits appear without
+fighting a drag in progress. `/chains` shows the per-asset reversible edit history.
 
 ## Roadmap
 
