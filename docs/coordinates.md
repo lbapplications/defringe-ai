@@ -65,8 +65,27 @@ cv2.circle(img, (x, y), r, color, thickness)   # (x, y) point — pass tool coor
 img[y, x] = color                              # raw indexing — flip to [y, x]
 ```
 
-`apply_shape` relies on this: its `x, y` params go directly to `cv2.circle` as the
-centre point; only hand-rolled numpy loops (e.g. the keyer/defringe) index `[y, x]`.
+`draw_shape` relies on this: its `x, y` anchor resolves to a box, then cv2 draws with
+`(x, y)` points; only hand-rolled numpy loops (e.g. the keyer/defringe) index `[y, x]`.
+
+## Anchors (`draw_shape`)
+
+`(x, y)` is where the **anchor** sits; the `anchor` name says which part of the shape's
+bounding box lands there (same idea as CSS `transform-origin` / ImageMagick `-gravity`):
+
+```
+top_left    top     top_right
+   ●─────────●─────────●
+   │                   │
+ left      center    right
+   ●         ●         ●
+   │                   │
+   ●─────────●─────────●
+bottom_left bottom  bottom_right
+```
+
+Default `center`: `(x, y)` is the middle of the shape (what "put a circle at (x,y)"
+usually means). `top_left`: `(x, y)` is the box's top-left corner.
 
 ## Quick reference
 

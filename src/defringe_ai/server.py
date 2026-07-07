@@ -39,9 +39,9 @@ mcp = FastMCP("defringe-ai")
 TAXONOMY = {
     "session":   ["edit", "cancel", "commit"],          # open/close an edit transaction
     "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask"],
-    "shape":     ["apply_shape"],                        # draw primitives onto the image
+    "shape":     ["draw_shape"],                         # draw primitives onto the image
     "arrange":   ["move", "select"],                     # canvas layout — not gated
-    "workspace": ["open_asset", "list_workspaces", "status", "undo", "redo", "collapse", "export"],
+    "workspace": ["open_asset", "list_workspaces", "list_shapes", "status", "undo", "redo", "collapse", "export"],
 }
 GATED = set(TAXONOMY["transform"]) | set(TAXONOMY["shape"])
 
@@ -114,16 +114,43 @@ def commit(workspace: str = "") -> dict:
 
 
 @mcp.tool()
-def apply_shape(shape: str = "circle", x: int = -1, y: int = -1, radius: int = -1,
-                color: str = "255,40,40,255", thickness: int = 3, workspace: str = "") -> dict:
-    """[shape · gated] Draw a primitive onto the image. Coords are (x, y), origin
-    top-left, x→right, y→down (see docs/coordinates.md). Defaults draw an empty
-    (outline) circle centred on the image. x/y/radius = -1 mean "use the default".
-    Requires an active edit session (call edit first)."""
-    col = tuple(int(c) for c in color.split(","))
-    return _apply("apply_shape", ops.apply_shape, workspace, shape=shape,
-                  x=None if x < 0 else x, y=None if y < 0 else y,
-                  radius=None if radius < 0 else radius, color=col, thickness=thickness)
+def list_shapes() -> dict:
+    """The registered shapes, anchors, and named colours that draw_shape understands."""
+    return {"shapes": list(ops.SHAPES), "anchors": list(ops._ANCHORS), "colors": list(ops._NAMED_COLORS)}
+
+
+@mcp.tool()
+def draw_shape(shape: str = "circle", x: int = -1, y: int = -1, width: int = -1, height: int = -1,
+               color: str = "red", anchor: str = "center", fill: bool = False,
+               thickness: int = 3, workspace: str = "") -> dict:
+    """[shape · gated] Draw a registered primitive with one consistent spatial model.
+
+      shape   : circle | ellipse | square | rectangle | triangle  (see list_shapes)
+      x, y    : where the ANCHOR point sits, in pixels (top-left origin, x→right, y→down).
+                Omit (leave -1) to use the image centre.
+      width   : box width in px; omit -> half the short side.
+      height  : box height in px; omit -> same as width (symmetric).
+      anchor  : which part of the shape lands at (x,y): center (default), top_left,
+                top, top_right, left, right, bottom_left, bottom, bottom_right.
+      color   : 'red' | '#rrggbb[aa]' | 'r,g,b[,a]'.
+      fill    : True = filled, False = outline (thickness px).
+
+    Returns the workspace status plus `drew` (the resolved shape/anchor/center/bbox in
+    pixels) and `clipped` — so you can see exactly what landed and adjust. Gated: call
+    edit(...) first; cancel() to revert. Coordinate details in docs/coordinates.md."""
+    ws = Workspace.resolve(workspace, HOME)
+    if not ws.in_session():
+        raise ValueError("'draw_shape' is gated: no active edit session. "
+                         'Call edit("<what you want>") first; cancel()/commit() to end.')
+    h, w = ws.current_array().shape[:2]
+    g = ops.resolve_box(w, h, x=None if x < 0 else x, y=None if y < 0 else y,
+                        width=None if width < 0 else width,
+                        height=None if height < 0 else height, anchor=anchor)
+    st = ws.apply("draw_shape", ops.draw_shape,
+                  {"shape": shape, "box": g["box"], "color": color, "fill": fill, "thickness": thickness})
+    return {**st, "drew": {"shape": shape, "anchor": anchor,
+                           "center": list(g["center"]), "bbox": list(g["box"])},
+            "clipped": g["clipped"]}
 
 
 # For every tool below, `workspace` is optional: name it to target a specific asset,
@@ -262,13 +289,17 @@ def main() -> None:
     for name in ("cancel", "commit"):
         cp = sub.add_parser(name, help=f"{name} the edit session")
         cp.add_argument("workspace", nargs="?", default="")
-    shp = sub.add_parser("shape", help="apply_shape — gated: needs an active edit session")
+    shp = sub.add_parser("shape", help="draw_shape — gated: needs an active edit session")
+    shp.add_argument("shape", nargs="?", default="circle")
     shp.add_argument("workspace", nargs="?", default="")
     shp.add_argument("--x", type=int, default=-1)
     shp.add_argument("--y", type=int, default=-1)
-    shp.add_argument("--radius", type=int, default=-1)
-    shp.add_argument("--color", default="255,40,40,255")
+    shp.add_argument("--width", type=int, default=-1)
+    shp.add_argument("--height", type=int, default=-1)
+    shp.add_argument("--anchor", default="center")
+    shp.add_argument("--color", default="red")
     shp.add_argument("--thickness", type=int, default=3)
+    shp.add_argument("--fill", action="store_true")
 
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
@@ -311,13 +342,21 @@ def main() -> None:
         _print(Workspace.resolve(args.workspace, HOME).commit_edit())
         print("  committed — changes kept, backup discarded.")
     elif args.cmd == "shape":
-        col = tuple(int(c) for c in args.color.split(","))
         try:
-            st = _apply("apply_shape", ops.apply_shape, args.workspace, shape="circle",
-                        x=None if args.x < 0 else args.x, y=None if args.y < 0 else args.y,
-                        radius=None if args.radius < 0 else args.radius,
-                        color=col, thickness=args.thickness)
+            ws = Workspace.resolve(args.workspace, HOME)
+            if not ws.in_session():
+                raise ValueError("no active edit session — run `edit \"<intent>\"` first")
+            h, w = ws.current_array().shape[:2]
+            g = ops.resolve_box(w, h, x=None if args.x < 0 else args.x,
+                                y=None if args.y < 0 else args.y,
+                                width=None if args.width < 0 else args.width,
+                                height=None if args.height < 0 else args.height, anchor=args.anchor)
+            st = ws.apply("draw_shape", ops.draw_shape,
+                          {"shape": args.shape, "box": g["box"], "color": args.color,
+                           "fill": args.fill, "thickness": args.thickness})
             _print(st)
+            print(f"  drew {args.shape} @ bbox {g['box']} (anchor {args.anchor})"
+                  f"{'  ⚠ clipped' if g['clipped'] else ''}")
         except ValueError as e:
             print(f"  REFUSED: {e}")
     else:  # serve (default)

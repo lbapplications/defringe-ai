@@ -147,33 +147,87 @@ def silhouette_mask(img: RGBA) -> RGBA:
     return out
 
 
-def apply_shape(
-    img: RGBA,
-    shape: str = "circle",
-    x: int | None = None,
-    y: int | None = None,
-    radius: int | None = None,
-    color: tuple = (255, 40, 40, 255),
-    thickness: int = 3,
-) -> RGBA:
-    """Draw a primitive onto the image. Coordinates follow the tool convention: (x, y)
-    with origin top-left, x→right, y→down (see docs/coordinates.md). Internally we hand
-    cv2 the point as (x, y) — note that is the transpose of numpy's arr[y, x] indexing.
+# --- shapes ----------------------------------------------------------------
+# All shapes share one spatial model: an (x, y) anchor point + a (width, height)
+# bounding box + an `anchor` naming which part of the box lands at (x, y). Coords are
+# pixels, (x, y) top-left origin, x→right, y→down (see docs/coordinates.md).
 
-    Defaults draw an *empty* (outline, thickness>0) circle centred on the image — the
-    demonstrator for the edit → tool → cancel pipeline.
-    """
-    h, w = img.shape[:2]
-    x = w // 2 if x is None else int(x)              # centre.x  (columns, →)
-    y = h // 2 if y is None else int(y)              # centre.y  (rows, ↓)
-    radius = (min(w, h) // 4) if radius is None else int(radius)
-    out = img.copy()
-    col = tuple(int(c) for c in color)
-    if shape == "circle":
-        # cv2 takes the centre as an (x, y) point — same convention as the tool API.
-        cv2.circle(out, (x, y), radius, col, int(thickness), lineType=cv2.LINE_AA)
+SHAPES = ("circle", "ellipse", "square", "rectangle", "triangle")
+
+_NAMED_COLORS = {
+    "red": (255, 0, 0, 255), "green": (0, 200, 0, 255), "blue": (0, 90, 255, 255),
+    "white": (255, 255, 255, 255), "black": (0, 0, 0, 255), "yellow": (255, 210, 0, 255),
+    "orange": (255, 140, 0, 255), "cyan": (0, 200, 220, 255), "magenta": (230, 0, 200, 255),
+    "gray": (128, 128, 128, 255), "grey": (128, 128, 128, 255), "transparent": (0, 0, 0, 0),
+}
+
+# where in the box the anchor point sits: name -> (horizontal frac, vertical frac)
+_ANCHORS = {
+    "top_left": (0, 0), "top": (0.5, 0), "top_right": (1, 0),
+    "left": (0, 0.5), "center": (0.5, 0.5), "right": (1, 0.5),
+    "bottom_left": (0, 1), "bottom": (0.5, 1), "bottom_right": (1, 1),
+}
+
+
+def parse_color(s) -> tuple:
+    """'red' | '#rrggbb[aa]' | 'r,g,b[,a]' | already-a-tuple  ->  (R,G,B,A) uint8."""
+    if isinstance(s, (tuple, list)):
+        c = list(int(v) for v in s)
+    elif s.strip().startswith("#"):
+        h = s.strip()[1:]
+        c = [int(h[i:i + 2], 16) for i in range(0, len(h), 2)]
+    elif "," in s:
+        c = [int(v) for v in s.split(",")]
     else:
-        raise ValueError(f"unknown shape: {shape!r} (only 'circle' so far)")
+        key = s.strip().lower()
+        if key not in _NAMED_COLORS:
+            raise ValueError(f"unknown colour {s!r}; use a name, #hex, or r,g,b[,a]")
+        return _NAMED_COLORS[key]
+    if len(c) == 3:
+        c.append(255)
+    return tuple(c[:4])
+
+
+def resolve_box(W, H, x=None, y=None, width=None, height=None, anchor="center") -> dict:
+    """Turn (anchor point + size + anchor name) into a concrete pixel box.
+    Defaults: size = half the short side, anchor point = image centre. height defaults
+    to width (symmetric). Returns {box:(x0,y0,x1,y1), center:(cx,cy), clipped:bool}."""
+    if anchor not in _ANCHORS:
+        raise ValueError(f"unknown anchor {anchor!r}; one of {list(_ANCHORS)}")
+    bw = (min(W, H) // 2) if width is None else int(width)
+    bh = bw if height is None else int(height)
+    ax = (W // 2) if x is None else int(x)
+    ay = (H // 2) if y is None else int(y)
+    fx, fy = _ANCHORS[anchor]
+    x0 = round(ax - bw * fx)
+    y0 = round(ay - bh * fy)
+    x1, y1 = x0 + bw, y0 + bh
+    clipped = x0 < 0 or y0 < 0 or x1 > W or y1 > H
+    return {"box": (x0, y0, x1, y1), "center": (x0 + bw // 2, y0 + bh // 2), "clipped": clipped}
+
+
+def draw_shape(img: RGBA, shape="circle", box=None, color=(255, 0, 0, 255),
+               fill=False, thickness=3) -> RGBA:
+    """Draw one registered primitive inside a resolved pixel box (x0,y0,x1,y1)."""
+    if shape not in SHAPES:
+        raise ValueError(f"unknown shape {shape!r}; registered: {list(SHAPES)}")
+    x0, y0, x1, y1 = (int(v) for v in box)
+    col = parse_color(color)
+    t = -1 if fill else max(1, int(thickness))       # cv2: -1 fills
+    out = img.copy()
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    if shape == "circle":
+        cv2.circle(out, (cx, cy), min(x1 - x0, y1 - y0) // 2, col, t, lineType=cv2.LINE_AA)
+    elif shape == "ellipse":
+        cv2.ellipse(out, (cx, cy), ((x1 - x0) // 2, (y1 - y0) // 2), 0, 0, 360, col, t, lineType=cv2.LINE_AA)
+    elif shape in ("square", "rectangle"):
+        cv2.rectangle(out, (x0, y0), (x1, y1), col, t, lineType=cv2.LINE_AA)
+    elif shape == "triangle":
+        pts = np.array([[cx, y0], [x0, y1], [x1, y1]], np.int32)
+        if fill:
+            cv2.fillPoly(out, [pts], col, lineType=cv2.LINE_AA)
+        else:
+            cv2.polylines(out, [pts], True, col, max(1, int(thickness)), lineType=cv2.LINE_AA)
     return out
 
 
