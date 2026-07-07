@@ -9,7 +9,8 @@ build/
 .uv/
 uv.lock
 
-# defringe-ai output dir
+# defringe-ai workspaces (local asset copies + edit history)
+workspace/
 out/
 *.tmp.png
 

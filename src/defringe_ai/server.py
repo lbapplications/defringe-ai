@@ -1,138 +1,196 @@
-"""defringe-ai MCP server.
+"""defringe-ai — MCP server + CLI, both thin front-ends over the workspace engine.
 
-Exposes the deterministic raster transforms as MCP tools. Every tool takes an
-`image` reference (a filesystem path OR a session id returned by a prior tool),
-writes a PNG into the output dir, and returns {session, path, width, height} so a
-vision model can chain ops and re-read the result to self-correct.
+The workspace (on-disk asset + reversible edit chain) is the source of truth. Every
+transform tool applies to the active workspace's HEAD and returns its status, so a
+vision agent can chain edits, undo, and collapse — and a human can drive the exact
+same workspace from the CLI.
 
-Run:
-  defringe-ai                       # stdio (local agent)
-  defringe-ai --http --preview      # HTTP on a server + browser gallery
+  defringe-ai open ./art/octopus.png     # copy an asset in, start editing (human)
+  defringe-ai serve --preview            # run the MCP server + browser gallery
+  defringe-ai undo | redo | status | collapse | export out.png
+
+Transforms (key_background, crop, defringe, …) are exposed as MCP tools for the agent.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import socket
 import threading
-import uuid
 
-import numpy as np
 from mcp.server.fastmcp import FastMCP
 
 from . import imageops as ops
+from .workspace import HOME, Workspace
 
-OUTPUT_DIR = os.environ.get("DEFRINGE_OUT", "out")
-SESSIONS: dict[str, np.ndarray] = {}
+# Uncommon defaults, deliberately off the 8000/8080/3000 beaten path so the server
+# can run beside whatever an artist already has open. Auto-bumped if taken anyway.
+DEFAULT_HTTP_PORT = 47823
+DEFAULT_PREVIEW_PORT = 47824
 
 mcp = FastMCP("defringe-ai")
 
 
-# --- session plumbing ------------------------------------------------------
+# --- transform registry: name -> (function, param docstring) ---------------
+# Each applies to the active workspace HEAD via workspace.apply.
 
-def _resolve(image: str) -> np.ndarray:
-    """Turn an image reference (session id or path) into an RGBA array."""
-    if image in SESSIONS:
-        return SESSIONS[image]
-    if os.path.exists(image):
-        return ops.load(image)
-    raise ValueError(f"unknown image reference: {image!r} (not a session id or a path)")
-
-
-def _emit(img: np.ndarray, label: str) -> dict:
-    """Persist a result, register a session, and return the agent-facing handle."""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    sid = f"{label}-{uuid.uuid4().hex[:8]}"
-    path = os.path.join(OUTPUT_DIR, f"{sid}.png")
-    w, h = ops.save(img, path)
-    SESSIONS[sid] = img
-    return {"session": sid, "path": path, "width": w, "height": h}
-
-
-# --- tools -----------------------------------------------------------------
-
-@mcp.tool()
-def open_image(path: str) -> dict:
-    """Load an image from disk into a session so later tools can reference it."""
-    return _emit(ops.load(path), "open")
+def _apply(op: str, fn, **params) -> dict:
+    return Workspace.active(HOME).apply(op, fn, params)
 
 
 @mcp.tool()
-def key_background(image: str, bg: str = "white", lo: int = 40, hi: int = 90) -> dict:
-    """Threshold a flat background to alpha with a soft LO..HI ramp for AA edges.
+def open_asset(path: str) -> dict:
+    """Copy an external asset into a fresh workspace and make it the active edit target."""
+    return Workspace.open_asset(path, HOME).status()
+
+
+@mcp.tool()
+def key_background(bg: str = "white", lo: int = 40, hi: int = 90) -> dict:
+    """Threshold a flat background to alpha with a soft lo..hi ramp.
     bg is 'white', 'black', '#rrggbb', or 'r,g,b'."""
-    return _emit(ops.key_background(_resolve(image), bg=bg, lo=lo, hi=hi), "key")
+    return _apply("key_background", ops.key_background, bg=bg, lo=lo, hi=hi)
 
 
 @mcp.tool()
-def trim_alpha(image: str) -> dict:
+def trim_alpha() -> dict:
     """Crop to the content bounding box (alpha > 0)."""
-    return _emit(ops.trim_alpha(_resolve(image)), "trim")
+    return _apply("trim_alpha", ops.trim_alpha)
 
 
 @mcp.tool()
-def crop(image: str, x: int, y: int, w: int, h: int) -> dict:
+def crop(x: int, y: int, w: int, h: int) -> dict:
     """Carve a sub-rect out of the image (extract-region)."""
-    return _emit(ops.crop(_resolve(image), x, y, w, h), "crop")
+    return _apply("crop", ops.crop, x=x, y=y, w=w, h=h)
 
 
 @mcp.tool()
-def defringe(
-    image: str,
-    erode_px: int = 1,
-    burn: float = 0.45,
-    rim_lum: float = 135.0,
-) -> dict:
-    """Erode the alpha edge `erode_px` px to drop the matte fringe, then burn the
-    remaining edge pixels so a white/halo rim melts into a dark background."""
-    return _emit(
-        ops.defringe(_resolve(image), erode_px=erode_px, burn=burn, rim_lum=rim_lum),
-        "defringe",
-    )
+def defringe(erode_px: int = 1, burn: float = 0.45, rim_lum: float = 135.0) -> dict:
+    """Erode the alpha edge to drop the matte fringe, then burn the remaining edge
+    pixels so a white/halo rim melts into a dark background."""
+    return _apply("defringe", ops.defringe, erode_px=erode_px, burn=burn, rim_lum=rim_lum)
 
 
 @mcp.tool()
-def upscale(image: str, factor: float = 2.0, sharpen: float = 0.6) -> dict:
+def upscale(factor: float = 2.0, sharpen: float = 0.6) -> dict:
     """Lanczos3 resample + gentle sharpen. Holds linework; adds no real detail."""
-    return _emit(ops.upscale(_resolve(image), factor=factor, sharpen=sharpen), "upscale")
+    return _apply("upscale", ops.upscale, factor=factor, sharpen=sharpen)
 
 
 @mcp.tool()
-def silhouette_mask(image: str) -> dict:
+def silhouette_mask() -> dict:
     """Emit just the alpha shape (white RGB + original alpha) for CSS mask-image."""
-    return _emit(ops.silhouette_mask(_resolve(image)), "mask")
+    return _apply("silhouette_mask", ops.silhouette_mask)
+
+
+# --- workspace controls (agent-facing too) ---------------------------------
+
+@mcp.tool()
+def undo() -> dict:
+    """Step HEAD back one edit. Reversible; redo is still available."""
+    return Workspace.active(HOME).undo()
+
+
+@mcp.tool()
+def redo() -> dict:
+    """Step HEAD forward one edit (after an undo)."""
+    return Workspace.active(HOME).redo()
+
+
+@mcp.tool()
+def status() -> dict:
+    """Current workspace state: HEAD, the edit chain, can_undo/redo, current file."""
+    return Workspace.active(HOME).status()
+
+
+@mcp.tool()
+def collapse() -> dict:
+    """Verify: flatten the edit chain to the current image as the new base asset."""
+    return Workspace.active(HOME).collapse()
+
+
+@mcp.tool()
+def export(dest: str) -> dict:
+    """Write the current image out to a path — the finished deliverable."""
+    return Workspace.active(HOME).export(dest)
+
+
+# --- helpers ---------------------------------------------------------------
+
+def _free_port(preferred: int, host: str = "127.0.0.1") -> int:
+    """Return `preferred` if bindable, else the next free port above it."""
+    for port in range(preferred, preferred + 50):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"no free port near {preferred}")
 
 
 # --- entrypoint ------------------------------------------------------------
 
+def _print(status: dict) -> None:
+    print(f"[{status['workspace']}] head={status['head']}/{status['steps'] - 1}  "
+          f"chain: {' -> '.join(status['chain'])}")
+    print(f"  current: {status['current']}  ({status['width']}x{status['height']})")
+
+
 def main() -> None:
-    global OUTPUT_DIR
     p = argparse.ArgumentParser(prog="defringe-ai")
-    p.add_argument("--http", action="store_true", help="serve over streamable HTTP instead of stdio")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--preview", action="store_true", help="also serve a browser gallery of the output dir")
-    p.add_argument("--preview-port", type=int, default=8787)
-    p.add_argument("--out", default=OUTPUT_DIR, help="output directory (default: ./out)")
+    sub = p.add_subparsers(dest="cmd")
+
+    sp = sub.add_parser("open", help="copy an asset into a workspace and start editing")
+    sp.add_argument("path")
+
+    sub.add_parser("undo")
+    sub.add_parser("redo")
+    sub.add_parser("status")
+    sub.add_parser("collapse", help="verify: flatten the edit chain to the current asset")
+    ep = sub.add_parser("export")
+    ep.add_argument("dest")
+
+    srv = sub.add_parser("serve", help="run the MCP server")
+    srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
+    srv.add_argument("--host", default="127.0.0.1")
+    srv.add_argument("--port", type=int, default=DEFAULT_HTTP_PORT)
+    srv.add_argument("--preview", action="store_true", help="also serve a browser gallery")
+    srv.add_argument("--preview-port", type=int, default=DEFAULT_PREVIEW_PORT)
+
     args = p.parse_args()
 
-    OUTPUT_DIR = args.out
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    if args.cmd == "open":
+        _print(Workspace.open_asset(args.path, HOME).status())
+    elif args.cmd == "undo":
+        _print(Workspace.active(HOME).undo())
+    elif args.cmd == "redo":
+        _print(Workspace.active(HOME).redo())
+    elif args.cmd == "status":
+        _print(Workspace.active(HOME).status())
+    elif args.cmd == "collapse":
+        _print(Workspace.active(HOME).collapse())
+        print("  collapsed — the current image is now the verified base.")
+    elif args.cmd == "export":
+        st = Workspace.active(HOME).export(args.dest)
+        print(f"  exported -> {st['exported']}")
+    else:  # serve (default)
+        http = getattr(args, "http", False)
+        preview = getattr(args, "preview", False)
+        host = getattr(args, "host", "127.0.0.1")
+        if preview:
+            from .preview import serve_preview
 
-    if args.preview:
-        from .preview import serve_preview
-
-        threading.Thread(
-            target=serve_preview, args=(OUTPUT_DIR, args.host, args.preview_port), daemon=True
-        ).start()
-        print(f"[preview] gallery: http://{args.host}:{args.preview_port}", flush=True)
-
-    if args.http:
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+            pport = _free_port(getattr(args, "preview_port", DEFAULT_PREVIEW_PORT), host)
+            threading.Thread(target=serve_preview, args=(HOME, host, pport), daemon=True).start()
+            print(f"[preview] gallery: http://{host}:{pport}", flush=True)
+        if http:
+            mcp.settings.host = host
+            mcp.settings.port = _free_port(getattr(args, "port", DEFAULT_HTTP_PORT), host)
+            print(f"[mcp] streamable-http: http://{host}:{mcp.settings.port}/mcp", flush=True)
+            mcp.run(transport="streamable-http")
+        else:
+            mcp.run()
 
 
 if __name__ == "__main__":

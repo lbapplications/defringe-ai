@@ -27,35 +27,74 @@ Photoshop's non-painting tools (magic wand, refine edge, levels).
   as plain array math (the `MxNxRxGxB` model). Pillow for I/O, OpenCV for morphology.
 - **[FastMCP](https://modelcontextprotocol.io)** — `stdio` for a local agent, streamable
   HTTP to run on a server.
-- **Local, deterministic, no cloud.** Each tool: `image` ref → writes a PNG → returns
-  `{session, path, width, height}` so the agent chains tools and re-reads the result.
+- **Local, deterministic, no cloud.** Each tool edits the workspace and returns its
+  status (HEAD, the edit chain, the current file) so the agent re-reads the result and
+  self-corrects.
+
+## The workspace (the "playground")
+
+State lives on disk, not in the server's memory — so it survives an agent restart and
+a **human and the agent can edit the same asset**. You point at an asset; it's copied
+into a workspace; every edit is a full PNG snapshot in an append-only chain with a
+`HEAD` pointer:
+
+```
+workspace/octopus/
+  source/octopus.png       ← the original, copied in once, never mutated
+  history/0000-open.png    ← every edit is a full, reversible snapshot
+          0001-key_background.png
+          0002-defringe.png   ← HEAD
+  manifest.json            ← { steps:[…], head }
+```
+
+- **undo / redo** just move `HEAD` (snapshots are kept)
+- editing after an undo **truncates the redo tail** and forks from `HEAD`
+- **collapse** flattens the chain to the current image as the new base — *"verify, then
+  collapse the edit chain to the verified asset"*
+- **export** writes `HEAD` out as the finished deliverable
+
+MCP tools (for the agent) and the CLI (for you) are thin front-ends over this — same
+workspace on disk.
 
 ## Run
 
 ```bash
-uv sync                       # install
-uv run defringe-ai            # stdio (for a local MCP client / agent)
-uv run defringe-ai --http --preview   # HTTP server + browser gallery on :8787
+uv sync
+
+# --- human, from the shell ---
+uv run defringe-ai open ./art/octopus.png   # copy an asset in, start editing
+uv run defringe-ai status
+uv run defringe-ai undo            # / redo
+uv run defringe-ai collapse        # verify: flatten to the current image
+uv run defringe-ai export out.png
+
+# --- for an agent / MCP client ---
+uv run defringe-ai serve                       # stdio
+uv run defringe-ai serve --http --preview      # HTTP + browser gallery
 ```
 
-`--preview` serves a live gallery of the `out/` dir (auto-refresh, dark+light
-checkerboard so you can judge alpha edges) — this is the "see changes on a server" loop.
+Ports default to the **uncommon** `47823` (MCP) / `47824` (preview) and **auto-bump to
+the next free port** if taken — so it runs beside whatever an artist already has open.
+`--preview` serves a live view of the edit chain with `HEAD` marked (auto-refresh,
+dark+light checkerboard to judge alpha edges).
 
 ### Register with an MCP client (stdio)
 
 ```json
 {
   "mcpServers": {
-    "defringe-ai": { "command": "uv", "args": ["run", "defringe-ai"] }
+    "defringe-ai": { "command": "uv", "args": ["run", "defringe-ai", "serve"] }
   }
 }
 ```
 
 ## Tools (v0)
 
+**Transforms** — each applies to the active workspace's `HEAD`:
+
 | Tool | Does |
 |---|---|
-| `open_image` | load a file into a session |
+| `open_asset` | copy an external asset into a fresh workspace |
 | `key_background` | luminance/value threshold → alpha, soft `lo..hi` ramp. `bg: white \| black \| #rrggbb \| r,g,b` |
 | `crop` | carve a sub-rect (extract-region) |
 | `trim_alpha` | crop to the content bounding box |
@@ -63,12 +102,12 @@ checkerboard so you can judge alpha edges) — this is the "see changes on a ser
 | `upscale` | lanczos3 resample + gentle sharpen (holds linework; adds no real detail) |
 | `silhouette_mask` | emit just the alpha shape for CSS `mask-image` tricks |
 
-Every tool accepts an `image` that is **either a filesystem path or a session id**
-returned by a prior tool, so the agent chains ops without re-reading files.
+**Workspace controls:** `undo`, `redo`, `status`, `collapse`, `export`.
 
 ## Roadmap
 
 - [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`)
+- [x] on-disk workspace with reversible undo/redo + `collapse` (verify), shared by CLI and MCP
 - [ ] tests + a sample asset sheet
 - [ ] `tint`/`recolor`, `feather`, `drop-shadow`, `flip`/`rotate`
 - [ ] `remove_bg` (ML via `rembg`, `pip install defringe-ai[ml]`) for photographic inputs
