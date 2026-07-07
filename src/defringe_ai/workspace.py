@@ -70,11 +70,36 @@ class Workspace:
 
     @classmethod
     def active(cls, home: str = HOME) -> "Workspace":
-        """The workspace last opened (or a raised error if none)."""
+        """The workspace last opened or touched (or a raised error if none)."""
         name = _get_active(home)
         if not name:
             raise ValueError("no active workspace — call open_asset first")
         return cls(os.path.join(home, name))
+
+    @classmethod
+    def resolve(cls, name: str = "", home: str = HOME) -> "Workspace":
+        """A workspace by name (which then becomes active), or the active one if blank.
+
+        This is the versatility hook: the agent can open several assets and address
+        each by name, or omit the name and keep shaping whatever it touched last.
+        """
+        if not name:
+            return cls.active(home)
+        root = os.path.join(home, name)
+        if not os.path.exists(os.path.join(root, "manifest.json")):
+            raise ValueError(f"no workspace named {name!r} — open one first ({cls.list_all(home)})")
+        _set_active(home, name)
+        return cls(root)
+
+    @classmethod
+    def list_all(cls, home: str = HOME) -> list[str]:
+        """Every open workspace, so the agent (or a human) can see what it's juggling."""
+        if not os.path.isdir(home):
+            return []
+        return sorted(
+            d for d in os.listdir(home)
+            if os.path.exists(os.path.join(home, d, "manifest.json"))
+        )
 
     # --- edits -------------------------------------------------------------
 

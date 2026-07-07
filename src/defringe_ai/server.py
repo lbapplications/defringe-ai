@@ -34,84 +34,98 @@ mcp = FastMCP("defringe-ai")
 # --- transform registry: name -> (function, param docstring) ---------------
 # Each applies to the active workspace HEAD via workspace.apply.
 
-def _apply(op: str, fn, **params) -> dict:
-    return Workspace.active(HOME).apply(op, fn, params)
+def _apply(op: str, fn, workspace: str, **params) -> dict:
+    return Workspace.resolve(workspace, HOME).apply(op, fn, params)
 
 
 @mcp.tool()
-def open_asset(path: str) -> dict:
-    """Copy an external asset into a fresh workspace and make it the active edit target."""
-    return Workspace.open_asset(path, HOME).status()
+def open_asset(path: str, name: str = "") -> dict:
+    """Copy an external asset into a workspace and make it the active edit target.
+    Open several (each gets a name, defaulting to the filename) and shape them in
+    parallel — address any by its `name`, or omit `name` on later tools to keep
+    working the one you touched last."""
+    return Workspace.open_asset(path, HOME, name or None).status()
 
 
 @mcp.tool()
-def key_background(bg: str = "white", lo: int = 40, hi: int = 90) -> dict:
+def list_workspaces() -> dict:
+    """List every open workspace and which one is currently active."""
+    from .workspace import _get_active
+
+    return {"workspaces": Workspace.list_all(HOME), "active": _get_active(HOME)}
+
+
+# For every tool below, `workspace` is optional: name it to target a specific asset,
+# or leave it blank to act on the last workspace touched.
+
+@mcp.tool()
+def key_background(bg: str = "white", lo: int = 40, hi: int = 90, workspace: str = "") -> dict:
     """Threshold a flat background to alpha with a soft lo..hi ramp.
     bg is 'white', 'black', '#rrggbb', or 'r,g,b'."""
-    return _apply("key_background", ops.key_background, bg=bg, lo=lo, hi=hi)
+    return _apply("key_background", ops.key_background, workspace, bg=bg, lo=lo, hi=hi)
 
 
 @mcp.tool()
-def trim_alpha() -> dict:
+def trim_alpha(workspace: str = "") -> dict:
     """Crop to the content bounding box (alpha > 0)."""
-    return _apply("trim_alpha", ops.trim_alpha)
+    return _apply("trim_alpha", ops.trim_alpha, workspace)
 
 
 @mcp.tool()
-def crop(x: int, y: int, w: int, h: int) -> dict:
+def crop(x: int, y: int, w: int, h: int, workspace: str = "") -> dict:
     """Carve a sub-rect out of the image (extract-region)."""
-    return _apply("crop", ops.crop, x=x, y=y, w=w, h=h)
+    return _apply("crop", ops.crop, workspace, x=x, y=y, w=w, h=h)
 
 
 @mcp.tool()
-def defringe(erode_px: int = 1, burn: float = 0.45, rim_lum: float = 135.0) -> dict:
+def defringe(erode_px: int = 1, burn: float = 0.45, rim_lum: float = 135.0, workspace: str = "") -> dict:
     """Erode the alpha edge to drop the matte fringe, then burn the remaining edge
     pixels so a white/halo rim melts into a dark background."""
-    return _apply("defringe", ops.defringe, erode_px=erode_px, burn=burn, rim_lum=rim_lum)
+    return _apply("defringe", ops.defringe, workspace, erode_px=erode_px, burn=burn, rim_lum=rim_lum)
 
 
 @mcp.tool()
-def upscale(factor: float = 2.0, sharpen: float = 0.6) -> dict:
+def upscale(factor: float = 2.0, sharpen: float = 0.6, workspace: str = "") -> dict:
     """Lanczos3 resample + gentle sharpen. Holds linework; adds no real detail."""
-    return _apply("upscale", ops.upscale, factor=factor, sharpen=sharpen)
+    return _apply("upscale", ops.upscale, workspace, factor=factor, sharpen=sharpen)
 
 
 @mcp.tool()
-def silhouette_mask() -> dict:
+def silhouette_mask(workspace: str = "") -> dict:
     """Emit just the alpha shape (white RGB + original alpha) for CSS mask-image."""
-    return _apply("silhouette_mask", ops.silhouette_mask)
+    return _apply("silhouette_mask", ops.silhouette_mask, workspace)
 
 
 # --- workspace controls (agent-facing too) ---------------------------------
 
 @mcp.tool()
-def undo() -> dict:
+def undo(workspace: str = "") -> dict:
     """Step HEAD back one edit. Reversible; redo is still available."""
-    return Workspace.active(HOME).undo()
+    return Workspace.resolve(workspace, HOME).undo()
 
 
 @mcp.tool()
-def redo() -> dict:
+def redo(workspace: str = "") -> dict:
     """Step HEAD forward one edit (after an undo)."""
-    return Workspace.active(HOME).redo()
+    return Workspace.resolve(workspace, HOME).redo()
 
 
 @mcp.tool()
-def status() -> dict:
+def status(workspace: str = "") -> dict:
     """Current workspace state: HEAD, the edit chain, can_undo/redo, current file."""
-    return Workspace.active(HOME).status()
+    return Workspace.resolve(workspace, HOME).status()
 
 
 @mcp.tool()
-def collapse() -> dict:
+def collapse(workspace: str = "") -> dict:
     """Verify: flatten the edit chain to the current image as the new base asset."""
-    return Workspace.active(HOME).collapse()
+    return Workspace.resolve(workspace, HOME).collapse()
 
 
 @mcp.tool()
-def export(dest: str) -> dict:
+def export(dest: str, workspace: str = "") -> dict:
     """Write the current image out to a path — the finished deliverable."""
-    return Workspace.active(HOME).export(dest)
+    return Workspace.resolve(workspace, HOME).export(dest)
 
 
 # --- helpers ---------------------------------------------------------------
@@ -143,13 +157,15 @@ def main() -> None:
 
     sp = sub.add_parser("open", help="copy an asset into a workspace and start editing")
     sp.add_argument("path")
+    sp.add_argument("--name", default="", help="workspace name (default: the filename)")
 
-    sub.add_parser("undo")
-    sub.add_parser("redo")
-    sub.add_parser("status")
-    sub.add_parser("collapse", help="verify: flatten the edit chain to the current asset")
+    sub.add_parser("ls", help="list open workspaces")
+    for name in ("undo", "redo", "status", "collapse"):
+        cp = sub.add_parser(name)
+        cp.add_argument("workspace", nargs="?", default="", help="target workspace (default: active)")
     ep = sub.add_parser("export")
     ep.add_argument("dest")
+    ep.add_argument("workspace", nargs="?", default="", help="target workspace (default: active)")
 
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
@@ -161,18 +177,24 @@ def main() -> None:
     args = p.parse_args()
 
     if args.cmd == "open":
-        _print(Workspace.open_asset(args.path, HOME).status())
+        _print(Workspace.open_asset(args.path, HOME, args.name or None).status())
+    elif args.cmd == "ls":
+        from .workspace import _get_active
+
+        active = _get_active(HOME)
+        for w in Workspace.list_all(HOME):
+            print(f"  {'* ' if w == active else '  '}{w}")
     elif args.cmd == "undo":
-        _print(Workspace.active(HOME).undo())
+        _print(Workspace.resolve(args.workspace, HOME).undo())
     elif args.cmd == "redo":
-        _print(Workspace.active(HOME).redo())
+        _print(Workspace.resolve(args.workspace, HOME).redo())
     elif args.cmd == "status":
-        _print(Workspace.active(HOME).status())
+        _print(Workspace.resolve(args.workspace, HOME).status())
     elif args.cmd == "collapse":
-        _print(Workspace.active(HOME).collapse())
+        _print(Workspace.resolve(args.workspace, HOME).collapse())
         print("  collapsed — the current image is now the verified base.")
     elif args.cmd == "export":
-        st = Workspace.active(HOME).export(args.dest)
+        st = Workspace.resolve(args.workspace, HOME).export(args.dest)
         print(f"  exported -> {st['exported']}")
     else:  # serve (default)
         http = getattr(args, "http", False)

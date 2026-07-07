@@ -56,6 +56,11 @@ workspace/octopus/
 MCP tools (for the agent) and the CLI (for you) are thin front-ends over this — same
 workspace on disk.
 
+**Several assets at once.** Open multiple inputs and shape them in parallel — each is
+its own named workspace with its own edit chain. Every tool takes an **optional
+`workspace`**: name it to target a specific asset, or omit it to act on the one you
+touched last. `list_workspaces` (CLI: `ls`) shows what's in flight.
+
 ## Run
 
 ```bash
