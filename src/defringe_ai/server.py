@@ -32,11 +32,30 @@ DEFAULT_PREVIEW_PORT = 47824
 mcp = FastMCP("defringe-ai")
 
 
-# --- transform registry: name -> (function, param docstring) ---------------
-# Each applies to the active workspace HEAD via workspace.apply.
+# --- tool taxonomy ---------------------------------------------------------
+# Tools are grouped by what they touch. `transform` and `shape` MUTATE PIXELS and
+# are GATED: they refuse unless an edit session is active (call `edit` first, then
+# `cancel` to revert or `commit` to keep). Everything else runs freely.
+TAXONOMY = {
+    "session":   ["edit", "cancel", "commit"],          # open/close an edit transaction
+    "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask"],
+    "shape":     ["apply_shape"],                        # draw primitives onto the image
+    "arrange":   ["move", "select"],                     # canvas layout — not gated
+    "workspace": ["open_asset", "list_workspaces", "status", "undo", "redo", "collapse", "export"],
+}
+GATED = set(TAXONOMY["transform"]) | set(TAXONOMY["shape"])
+
 
 def _apply(op: str, fn, workspace: str, **params) -> dict:
-    return Workspace.resolve(workspace, HOME).apply(op, fn, params)
+    """Apply a pixel-mutating op — but only inside an edit session (the gate)."""
+    ws = Workspace.resolve(workspace, HOME)
+    if not ws.in_session():
+        raise ValueError(
+            f"'{op}' is gated: this asset has no active edit session. "
+            f'Call edit("<what you want to change>") first, then apply {op}; '
+            f"cancel() to revert or commit() to keep."
+        )
+    return ws.apply(op, fn, params)
 
 
 def _name(workspace: str) -> str:
@@ -61,6 +80,50 @@ def list_workspaces() -> dict:
     from .workspace import _get_active
 
     return {"workspaces": Workspace.list_all(HOME), "active": _get_active(HOME)}
+
+
+# --- session (the transactional gate) --------------------------------------
+
+@mcp.tool()
+def taxonomy() -> dict:
+    """The tool taxonomy and which categories are gated behind an edit session."""
+    return {"categories": TAXONOMY, "gated": sorted(GATED)}
+
+
+@mcp.tool()
+def edit(intent: str, workspace: str = "") -> dict:
+    """[session] Begin an edit transaction on an asset. You just describe *what you want
+    to change* (`intent`); this saves a backup copy and opens the gate so transform /
+    shape tools may run. End with cancel() to restore the backup, or commit() to keep."""
+    st = Workspace.resolve(workspace, HOME).begin_edit(intent)
+    Board(HOME).select(st["workspace"])
+    return st
+
+
+@mcp.tool()
+def cancel(workspace: str = "") -> dict:
+    """[session] Cancel the edit transaction: restore the asset from its backup, as if
+    nothing happened, and close the gate."""
+    return Workspace.resolve(workspace, HOME).cancel_edit()
+
+
+@mcp.tool()
+def commit(workspace: str = "") -> dict:
+    """[session] Commit the edit transaction: keep the current image, discard the backup."""
+    return Workspace.resolve(workspace, HOME).commit_edit()
+
+
+@mcp.tool()
+def apply_shape(shape: str = "circle", x: int = -1, y: int = -1, radius: int = -1,
+                color: str = "255,40,40,255", thickness: int = 3, workspace: str = "") -> dict:
+    """[shape · gated] Draw a primitive onto the image. Coords are (x, y), origin
+    top-left, x→right, y→down (see docs/coordinates.md). Defaults draw an empty
+    (outline) circle centred on the image. x/y/radius = -1 mean "use the default".
+    Requires an active edit session (call edit first)."""
+    col = tuple(int(c) for c in color.split(","))
+    return _apply("apply_shape", ops.apply_shape, workspace, shape=shape,
+                  x=None if x < 0 else x, y=None if y < 0 else y,
+                  radius=None if radius < 0 else radius, color=col, thickness=thickness)
 
 
 # For every tool below, `workspace` is optional: name it to target a specific asset,
@@ -193,6 +256,20 @@ def main() -> None:
     ep.add_argument("dest")
     ep.add_argument("workspace", nargs="?", default="", help="target workspace (default: active)")
 
+    ed = sub.add_parser("edit", help="begin an edit session (describe the change)")
+    ed.add_argument("intent")
+    ed.add_argument("workspace", nargs="?", default="")
+    for name in ("cancel", "commit"):
+        cp = sub.add_parser(name, help=f"{name} the edit session")
+        cp.add_argument("workspace", nargs="?", default="")
+    shp = sub.add_parser("shape", help="apply_shape — gated: needs an active edit session")
+    shp.add_argument("workspace", nargs="?", default="")
+    shp.add_argument("--x", type=int, default=-1)
+    shp.add_argument("--y", type=int, default=-1)
+    shp.add_argument("--radius", type=int, default=-1)
+    shp.add_argument("--color", default="255,40,40,255")
+    shp.add_argument("--thickness", type=int, default=3)
+
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     srv.add_argument("--host", default="127.0.0.1")
@@ -222,6 +299,27 @@ def main() -> None:
     elif args.cmd == "export":
         st = Workspace.resolve(args.workspace, HOME).export(args.dest)
         print(f"  exported -> {st['exported']}")
+    elif args.cmd == "edit":
+        st = Workspace.resolve(args.workspace, HOME).begin_edit(args.intent)
+        Board(HOME).select(st["workspace"])
+        print(f"  edit session OPEN on '{st['workspace']}' — intent: {args.intent!r}  (backup saved)")
+        _print(st)
+    elif args.cmd == "cancel":
+        _print(Workspace.resolve(args.workspace, HOME).cancel_edit())
+        print("  cancelled — restored from backup, as if nothing happened.")
+    elif args.cmd == "commit":
+        _print(Workspace.resolve(args.workspace, HOME).commit_edit())
+        print("  committed — changes kept, backup discarded.")
+    elif args.cmd == "shape":
+        col = tuple(int(c) for c in args.color.split(","))
+        try:
+            st = _apply("apply_shape", ops.apply_shape, args.workspace, shape="circle",
+                        x=None if args.x < 0 else args.x, y=None if args.y < 0 else args.y,
+                        radius=None if args.radius < 0 else args.radius,
+                        color=col, thickness=args.thickness)
+            _print(st)
+        except ValueError as e:
+            print(f"  REFUSED: {e}")
     else:  # serve (default)
         http = getattr(args, "http", False)
         preview = getattr(args, "preview", False)

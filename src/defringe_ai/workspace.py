@@ -146,6 +146,45 @@ class Workspace:
         self._write(m)
         return self.status()
 
+    # --- edit sessions (the transactional gate) ----------------------------
+
+    def begin_edit(self, intent: str) -> dict:
+        """Open an edit transaction: note the restore point and save a visible backup
+        copy, so transforms may run and `cancel` can put things back exactly."""
+        m = self._read()
+        m["session"] = {"active": True, "intent": intent, "restore_head": m["head"], "ts": _now()}
+        self._write(m)
+        shutil.copy2(self.current_path(), os.path.join(self.root, "backup.png"))
+        return self.status()
+
+    def cancel_edit(self) -> dict:
+        """Cancel the transaction: restore HEAD to the backup point, drop the session's
+        edits, delete the backup — as if the edit never happened."""
+        m = self._read()
+        s = m.get("session", {})
+        if not s.get("active"):
+            return self.status()
+        rh = s["restore_head"]
+        for st in m["steps"][rh + 1:]:
+            _rm(os.path.join(self.root, st["file"]))
+        m["steps"] = m["steps"][: rh + 1]
+        m["head"] = rh
+        m["session"] = {"active": False}
+        self._write(m)
+        _rm(os.path.join(self.root, "backup.png"))
+        return self.status()
+
+    def commit_edit(self) -> dict:
+        """Commit the transaction: keep the current image, discard the backup."""
+        m = self._read()
+        m["session"] = {"active": False}
+        self._write(m)
+        _rm(os.path.join(self.root, "backup.png"))
+        return self.status()
+
+    def in_session(self) -> bool:
+        return bool(self._read().get("session", {}).get("active"))
+
     def export(self, dest: str) -> dict:
         """Write the current (HEAD) image out to an arbitrary path — the deliverable."""
         os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
@@ -165,11 +204,14 @@ class Workspace:
         m = self._read()
         img = self.current_array()
         h, w = img.shape[:2]
+        sess = m.get("session", {})
         return {
             "workspace": m["name"],
             "root": self.root,
             "head": m["head"],
             "steps": len(m["steps"]),
+            "editing": bool(sess.get("active")),
+            "intent": sess.get("intent", ""),
             "can_undo": m["head"] > 0,
             "can_redo": m["head"] < len(m["steps"]) - 1,
             "current": self.current_path(),

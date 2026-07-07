@@ -147,6 +147,36 @@ def silhouette_mask(img: RGBA) -> RGBA:
     return out
 
 
+def apply_shape(
+    img: RGBA,
+    shape: str = "circle",
+    x: int | None = None,
+    y: int | None = None,
+    radius: int | None = None,
+    color: tuple = (255, 40, 40, 255),
+    thickness: int = 3,
+) -> RGBA:
+    """Draw a primitive onto the image. Coordinates follow the tool convention: (x, y)
+    with origin top-left, x→right, y→down (see docs/coordinates.md). Internally we hand
+    cv2 the point as (x, y) — note that is the transpose of numpy's arr[y, x] indexing.
+
+    Defaults draw an *empty* (outline, thickness>0) circle centred on the image — the
+    demonstrator for the edit → tool → cancel pipeline.
+    """
+    h, w = img.shape[:2]
+    x = w // 2 if x is None else int(x)              # centre.x  (columns, →)
+    y = h // 2 if y is None else int(y)              # centre.y  (rows, ↓)
+    radius = (min(w, h) // 4) if radius is None else int(radius)
+    out = img.copy()
+    col = tuple(int(c) for c in color)
+    if shape == "circle":
+        # cv2 takes the centre as an (x, y) point — same convention as the tool API.
+        cv2.circle(out, (x, y), radius, col, int(thickness), lineType=cv2.LINE_AA)
+    else:
+        raise ValueError(f"unknown shape: {shape!r} (only 'circle' so far)")
+    return out
+
+
 # --- misc ------------------------------------------------------------------
 
 def _parse_color(s: str) -> np.ndarray:

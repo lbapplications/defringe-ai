@@ -50,18 +50,20 @@ def build_state(home: str) -> list[dict]:
         except Exception:
             w, h = 0, 0
         a = b["assets"][name]
+        sess = m.get("session", {})
         out.append({
             "name": name, "x": a["x"], "y": a["y"], "scale": a["scale"], "z": z,
             "head": head, "steps": len(m["steps"]), "w": w, "h": h,
             "op": m["steps"][head]["op"], "selected": name == sel,
+            "editing": bool(sess.get("active")), "intent": sess.get("intent", ""),
             "rev": f'{head}-{len(m["steps"])}',
         })
     return out
 
 
 def _sig(state: list[dict]) -> str:
-    return json.dumps([(a["name"], a["x"], a["y"], a["scale"], a["z"], a["rev"], a["selected"])
-                       for a in state])
+    return json.dumps([(a["name"], a["x"], a["y"], a["scale"], a["z"], a["rev"],
+                        a["selected"], a["editing"], a["intent"]) for a in state])
 
 
 # --- chains (server-rendered history view) ---------------------------------

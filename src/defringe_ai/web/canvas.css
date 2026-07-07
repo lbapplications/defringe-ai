@@ -22,7 +22,13 @@ header .hint { color: #555; margin-left: auto; }
   border: 1px solid #ffffff14; border-radius: 6px; padding: 4px;
 }
 .asset.selected { border-color: #6cf; box-shadow: 0 0 0 1px #6cf6; }
+.asset.editing { border-color: #f5a623; box-shadow: 0 0 0 1px #f5a62366, 0 0 22px #f5a62333; }
 .asset.busy { cursor: grabbing; box-shadow: 0 8px 30px #000a; }
+.badge {
+  position: absolute; top: -11px; left: 6px; z-index: 2;
+  background: #f5a623; color: #1a1200; font-size: 11px; font-weight: 600;
+  padding: 2px 7px; border-radius: 10px; white-space: nowrap; pointer-events: none;
+}
 .asset img { display: block; pointer-events: none; }
 .asset .cap { font-size: 11px; color: #aaa; padding: 3px 2px 1px; white-space: nowrap; }
 .asset .cap .op { color: #666; }

@@ -12,14 +12,15 @@ const post = (url, body) =>
 
 function make(name) {
   const node = document.createElement('div'); node.className = 'asset';
+  const badge = document.createElement('div'); badge.className = 'badge';
   const img = document.createElement('img');
   const cap = document.createElement('div'); cap.className = 'cap';
   const handle = document.createElement('div'); handle.className = 'handle';
-  node.append(img, cap, handle);
+  node.append(badge, img, cap, handle);
   canvas.append(node);
   node.addEventListener('mousedown', e => { if (e.target !== handle) startMove(name, e); });
   handle.addEventListener('mousedown', e => startResize(name, e));
-  const rec = { node, img, cap, handle }; els.set(name, rec); return rec;
+  const rec = { node, img, cap, handle, badge }; els.set(name, rec); return rec;
 }
 
 function paint(a) {
@@ -30,6 +31,9 @@ function paint(a) {
   rec.node.style.zIndex = a.z;                 // z-order = index in the server's list
   rec.img.style.width = (baseW(a) * a.scale) + 'px';
   rec.node.classList.toggle('selected', a.selected);
+  rec.node.classList.toggle('editing', a.editing);
+  rec.badge.textContent = a.editing ? `✎ editing · ${a.intent}` : '';
+  rec.badge.style.display = a.editing ? 'block' : 'none';
   if (rec.img.dataset.rev !== a.rev) {
     rec.img.dataset.rev = a.rev;
     rec.img.src = `/img/${a.name}/${a.head}?v=${encodeURIComponent(a.rev)}`;
