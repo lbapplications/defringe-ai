@@ -46,7 +46,7 @@ class Workspace:
         name = name or os.path.splitext(os.path.basename(src_path))[0]
         # stagger new assets across the canvas so they don't land on top of each other
         n = len(cls.list_all(home))
-        canvas = {"x": 40 + (n % 4) * 250, "y": 40 + (n // 4) * 250}
+        canvas = {"x": 40 + (n % 4) * 250, "y": 40 + (n // 4) * 250, "scale": 1.0}
 
         root = os.path.join(home, name)
         if os.path.exists(root):
@@ -151,12 +151,23 @@ class Workspace:
         self._write(m)
         return self.status()
 
-    def move(self, x: int, y: int) -> dict:
-        """Reposition this asset on the shared canvas (agent- or human-driven)."""
+    def set_canvas(self, x=None, y=None, scale=None) -> dict:
+        """Update this asset's canvas placement (position and/or scale)."""
         m = self._read()
-        m["canvas"] = {"x": int(x), "y": int(y)}
+        c = m.get("canvas", {"x": 40, "y": 40, "scale": 1.0})
+        if x is not None:
+            c["x"] = int(x)
+        if y is not None:
+            c["y"] = int(y)
+        if scale is not None:
+            c["scale"] = round(max(0.1, min(6.0, float(scale))), 3)
+        m["canvas"] = c
         self._write(m)
         return self.status()
+
+    def move(self, x: int, y: int) -> dict:
+        """Reposition this asset on the shared canvas (agent- or human-driven)."""
+        return self.set_canvas(x=x, y=y)
 
     def export(self, dest: str) -> dict:
         """Write the current (HEAD) image out to an arbitrary path — the deliverable."""
@@ -188,7 +199,7 @@ class Workspace:
             "width": w,
             "height": h,
             "chain": [s["op"] for s in m["steps"]],
-            "canvas": m.get("canvas", {"x": 40, "y": 40}),
+            "canvas": {"x": 40, "y": 40, "scale": 1.0, **m.get("canvas", {})},
         }
 
     # --- io ----------------------------------------------------------------

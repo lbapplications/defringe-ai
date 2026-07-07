@@ -123,10 +123,11 @@ def collapse(workspace: str = "") -> dict:
 
 
 @mcp.tool()
-def move(x: int, y: int, workspace: str = "") -> dict:
-    """Reposition an asset on the shared canvas (top-left x,y in px). This is how I
-    arrange assets on the edit screen; a human can also drag them there."""
-    return Workspace.resolve(workspace, HOME).move(x, y)
+def move(x: int, y: int, scale: float = 0, workspace: str = "") -> dict:
+    """Place an asset on the shared canvas: top-left x,y in px, and optional display
+    scale (>0 to expand/contract; omit to leave scale unchanged). This is how I
+    arrange the edit screen; a human can also drag/resize assets there."""
+    return Workspace.resolve(workspace, HOME).set_canvas(x=x, y=y, scale=scale or None)
 
 
 @mcp.tool()
