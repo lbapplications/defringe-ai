@@ -21,7 +21,8 @@ import threading
 from mcp.server.fastmcp import FastMCP
 
 from . import imageops as ops
-from .workspace import HOME, Workspace
+from .board import Board
+from .workspace import HOME, Workspace, _get_active
 
 # Uncommon defaults, deliberately off the 8000/8080/3000 beaten path so the server
 # can run beside whatever an artist already has open. Auto-bumped if taken anyway.
@@ -38,13 +39,20 @@ def _apply(op: str, fn, workspace: str, **params) -> dict:
     return Workspace.resolve(workspace, HOME).apply(op, fn, params)
 
 
+def _name(workspace: str) -> str:
+    """Resolve a board asset name: the given one, or the active workspace."""
+    return workspace or _get_active(HOME) or ""
+
+
 @mcp.tool()
 def open_asset(path: str, name: str = "") -> dict:
     """Copy an external asset into a workspace and make it the active edit target.
     Open several (each gets a name, defaulting to the filename) and shape them in
     parallel — address any by its `name`, or omit `name` on later tools to keep
     working the one you touched last."""
-    return Workspace.open_asset(path, HOME, name or None).status()
+    st = Workspace.open_asset(path, HOME, name or None).status()
+    Board(HOME).select(st["workspace"])          # new asset lands selected, on top
+    return st
 
 
 @mcp.tool()
@@ -127,7 +135,17 @@ def move(x: int, y: int, scale: float = 0, workspace: str = "") -> dict:
     """Place an asset on the shared canvas: top-left x,y in px, and optional display
     scale (>0 to expand/contract; omit to leave scale unchanged). This is how I
     arrange the edit screen; a human can also drag/resize assets there."""
-    return Workspace.resolve(workspace, HOME).set_canvas(x=x, y=y, scale=scale or None)
+    name = _name(workspace)
+    b = Board(HOME).place(name, x=x, y=y, scale=scale or None)
+    return {"workspace": name, "placement": b["assets"].get(name), "z": b["order"].index(name)}
+
+
+@mcp.tool()
+def select(workspace: str = "") -> dict:
+    """Select an asset and bring it to the front of the canvas (raise it above others)."""
+    name = _name(workspace)
+    b = Board(HOME).select(name)
+    return {"selected": b["selected"], "order": b["order"]}
 
 
 @mcp.tool()
@@ -209,7 +227,7 @@ def main() -> None:
         preview = getattr(args, "preview", False)
         host = getattr(args, "host", "127.0.0.1")
         if preview:
-            from .preview import serve_preview
+            from .web.app import serve_preview
 
             pport = _free_port(getattr(args, "preview_port", DEFAULT_PREVIEW_PORT), host)
             threading.Thread(target=serve_preview, args=(HOME, host, pport), daemon=True).start()
