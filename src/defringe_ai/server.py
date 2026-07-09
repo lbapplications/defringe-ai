@@ -38,7 +38,7 @@ mcp = FastMCP("defringe-ai")
 # `cancel` to revert or `commit` to keep). Everything else runs freely.
 TAXONOMY = {
     "session":   ["edit", "cancel", "commit"],          # open/close an edit transaction
-    "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask"],
+    "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask", "canny"],
     "shape":     ["draw_shape"],                         # draw primitives onto the image
     "annotate":  ["mark"],                               # drop debug/seed dots
     "arrange":   ["move", "select"],                     # canvas layout — not gated
@@ -204,6 +204,14 @@ def silhouette_mask(workspace: str = "") -> dict:
     return _apply("silhouette_mask", ops.silhouette_mask, workspace)
 
 
+@mcp.tool()
+def canny(lo: int = 100, hi: int = 200, workspace: str = "") -> dict:
+    """[transform · gated] Canny edge map — white edges on black. `lo`/`hi` are the
+    hysteresis thresholds (100/200 is the classic pairing; lower them to catch fainter
+    edges, raise them to keep only strong ones). The edge *signal*, not an isolation."""
+    return _apply("canny", ops.canny, workspace, lo=lo, hi=hi)
+
+
 # --- workspace controls (agent-facing too) ---------------------------------
 
 @mcp.tool()
@@ -317,6 +325,11 @@ def main() -> None:
     mk.add_argument("--radius", type=int, default=4)
     mk.add_argument("--color", default="black")
 
+    cn = sub.add_parser("canny", help="Canny edge map — gated; needs an active edit session")
+    cn.add_argument("workspace", nargs="?", default="")
+    cn.add_argument("--lo", type=int, default=100)
+    cn.add_argument("--hi", type=int, default=200)
+
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     srv.add_argument("--host", default="127.0.0.1")
@@ -383,6 +396,15 @@ def main() -> None:
                 raise ValueError("no active edit session — run `edit \"<intent>\"` first")
             _print(ws.apply("mark", ops.mark, {"points": pts, "radius": args.radius, "color": args.color}))
             print(f"  marked {len(pts)} point(s): {pts}")
+        except ValueError as e:
+            print(f"  REFUSED: {e}")
+    elif args.cmd == "canny":
+        try:
+            ws = Workspace.resolve(args.workspace, HOME)
+            if not ws.in_session():
+                raise ValueError("no active edit session — run `edit \"<intent>\"` first")
+            _print(ws.apply("canny", ops.canny, {"lo": args.lo, "hi": args.hi}))
+            print(f"  canny edge map (lo={args.lo}, hi={args.hi})")
         except ValueError as e:
             print(f"  REFUSED: {e}")
     else:  # serve (default)

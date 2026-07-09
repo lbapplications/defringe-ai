@@ -77,11 +77,25 @@ as a dark line (invisible on dark backgrounds) instead of a glowing white halo.
 // then trim-alpha to the content box.
 ```
 
+## Repo intent (read before adding ceremony)
+
+This is **just a public repo to test an MCP** — a scratchpad, not a product. It lives on
+**one branch (`master`)**; no feature branches, no PRs, no worktrees to babysit. **Don't
+force structure on it yet** — no CI, packaging polish, elaborate configs, or big
+refactors unless asked. Keep changes small and direct; commit straight to `master`.
+
+Two folders are kept (empty, via `.gitkeep`) and their contents git-ignored:
+`inputs/` (drop source art here) and `workspace/` (runtime edit state the server writes).
+
 ## Status / next
 
-- [ ] `git init`, MCP skeleton (one `echo`-style tool to prove the wiring)
-- [ ] port `key-background` + `trim-alpha` + `defringe` + `upscale` from the sharp scripts
+Built (Python + FastMCP + NumPy + OpenCV + Pillow + Starlette): the workspace engine
+(reversible edit chain + edit-session gate), the transforms (`key_background`,
+`trim_alpha`, `crop`, `defringe`, `upscale`, `silhouette_mask`, `canny`), `draw_shape` +
+`mark`, the board (arrange/z-order), and the live edit screen (SSE push, auto-reload).
+
+- [ ] **isolation (tool #1)**: Canny → close gaps → `findContours` → fill largest contour
+      into alpha (the deterministic cutout). `canny` lands the edge signal; this closes it.
 - [ ] publish to the MCP registry (mcpmarket etc.)
 
-Fiddle when bored. The hard part (knowing *which* tools matter) is already done — it's
-the list above.
+Fiddle when bored. The hard part (knowing *which* tools matter) is already done.

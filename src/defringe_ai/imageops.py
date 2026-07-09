@@ -147,6 +147,22 @@ def silhouette_mask(img: RGBA) -> RGBA:
     return out
 
 
+def canny(img: RGBA, lo: int = 100, hi: int = 200) -> RGBA:
+    """Canny edge map: white edges on opaque black (mirrors cv2.Canny(frame, lo, hi)).
+
+    The hysteresis thresholds are `lo` (weak) and `hi` (strong) — the 100/200 default
+    is the classic pairing. Runs across the RGB channels (max gradient), like feeding a
+    colour frame straight into cv2.Canny. Output is a full RGBA snapshot so it flows
+    through the edit chain like any other transform. This is the *edge signal*, not an
+    isolation — closing the gaps + findContours + fill turns it into a cutout.
+    """
+    edges = cv2.Canny(img[..., :3], lo, hi)      # (H, W) uint8, 0 or 255
+    out = np.zeros_like(img)
+    out[..., :3] = edges[..., None]              # white where an edge fired
+    out[..., 3] = 255                            # opaque so the black bg reads on the canvas
+    return out
+
+
 # --- shapes ----------------------------------------------------------------
 # All shapes share one spatial model: an (x, y) anchor point + a (width, height)
 # bounding box + an `anchor` naming which part of the box lands at (x, y). Coords are

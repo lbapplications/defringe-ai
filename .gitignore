@@ -9,8 +9,11 @@ build/
 .uv/
 uv.lock
 
-# defringe-ai workspaces (local asset copies + edit history)
-workspace/
+# defringe-ai: keep the two folders, ignore their (local, runtime) contents
+inputs/*
+!inputs/.gitkeep
+workspace/*
+!workspace/.gitkeep
 out/
 *.tmp.png
 
