@@ -206,6 +206,19 @@ def resolve_box(W, H, x=None, y=None, width=None, height=None, anchor="center") 
     return {"box": (x0, y0, x1, y1), "center": (x0 + bw // 2, y0 + bh // 2), "clipped": clipped}
 
 
+def mark(img: RGBA, points, radius=4, color="black") -> RGBA:
+    """Drop a tiny filled dot at each [x, y] point (top-left origin, x→right, y→down).
+    For flagging seed points / locations to eyeball. Points outside the frame are skipped."""
+    h, w = img.shape[:2]
+    col = parse_color(color)
+    out = img.copy()
+    for p in points:
+        x, y = int(p[0]), int(p[1])
+        if 0 <= x < w and 0 <= y < h:
+            cv2.circle(out, (x, y), int(radius), col, -1, lineType=cv2.LINE_AA)
+    return out
+
+
 def draw_shape(img: RGBA, shape="circle", box=None, color=(255, 0, 0, 255),
                fill=False, thickness=3) -> RGBA:
     """Draw one registered primitive inside a resolved pixel box (x0,y0,x1,y1)."""

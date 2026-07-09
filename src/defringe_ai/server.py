@@ -40,10 +40,11 @@ TAXONOMY = {
     "session":   ["edit", "cancel", "commit"],          # open/close an edit transaction
     "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask"],
     "shape":     ["draw_shape"],                         # draw primitives onto the image
+    "annotate":  ["mark"],                               # drop debug/seed dots
     "arrange":   ["move", "select"],                     # canvas layout — not gated
     "workspace": ["open_asset", "list_workspaces", "list_shapes", "status", "undo", "redo", "collapse", "export"],
 }
-GATED = set(TAXONOMY["transform"]) | set(TAXONOMY["shape"])
+GATED = set(TAXONOMY["transform"]) | set(TAXONOMY["shape"]) | set(TAXONOMY["annotate"])
 
 
 def _apply(op: str, fn, workspace: str, **params) -> dict:
@@ -117,6 +118,15 @@ def commit(workspace: str = "") -> dict:
 def list_shapes() -> dict:
     """The registered shapes, anchors, and named colours that draw_shape understands."""
     return {"shapes": list(ops.SHAPES), "anchors": list(ops._ANCHORS), "colors": list(ops._NAMED_COLORS)}
+
+
+@mcp.tool()
+def mark(points: list[list[int]], radius: int = 4, color: str = "black", workspace: str = "") -> dict:
+    """[annotate · gated] Drop a tiny filled dot at each [x, y] in `points` — for flagging
+    seed points or locations to eyeball. Coords are (x, y), top-left origin, x→right,
+    y→down. Points outside the frame are skipped. Gated: call edit(...) first."""
+    st = _apply("mark", ops.mark, workspace, points=points, radius=radius, color=color)
+    return {**st, "marked": len(points), "points": points}
 
 
 @mcp.tool()
@@ -301,6 +311,12 @@ def main() -> None:
     shp.add_argument("--thickness", type=int, default=3)
     shp.add_argument("--fill", action="store_true")
 
+    mk = sub.add_parser("mark", help="drop dots at points — gated; e.g. mark '100,100 200,150'")
+    mk.add_argument("points", help='space-separated x,y pairs: "100,100 200,150 300,80"')
+    mk.add_argument("workspace", nargs="?", default="")
+    mk.add_argument("--radius", type=int, default=4)
+    mk.add_argument("--color", default="black")
+
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     srv.add_argument("--host", default="127.0.0.1")
@@ -357,6 +373,16 @@ def main() -> None:
             _print(st)
             print(f"  drew {args.shape} @ bbox {g['box']} (anchor {args.anchor})"
                   f"{'  ⚠ clipped' if g['clipped'] else ''}")
+        except ValueError as e:
+            print(f"  REFUSED: {e}")
+    elif args.cmd == "mark":
+        pts = [[int(v) for v in pair.split(",")] for pair in args.points.split()]
+        try:
+            ws = Workspace.resolve(args.workspace, HOME)
+            if not ws.in_session():
+                raise ValueError("no active edit session — run `edit \"<intent>\"` first")
+            _print(ws.apply("mark", ops.mark, {"points": pts, "radius": args.radius, "color": args.color}))
+            print(f"  marked {len(pts)} point(s): {pts}")
         except ValueError as e:
             print(f"  REFUSED: {e}")
     else:  # serve (default)
