@@ -17,6 +17,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
+
+# Unique per server process. Pushed to every SSE client on connect; when a tab sees it
+# change (because the server restarted with new code), it reloads itself — so a stale
+# tab never happens again. No Vite / build step needed.
+BUILD = str(int(time.time()))
 
 import uvicorn
 from starlette.applications import Starlette
@@ -106,6 +112,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
 
     async def events(request):
         async def gen():
+            yield f"event: build\ndata: {BUILD}\n\n"      # tab auto-reloads if this changed
             last, beat = None, 0
             while True:
                 if await request.is_disconnected():

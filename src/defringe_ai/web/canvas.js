@@ -83,7 +83,17 @@ window.addEventListener('mouseup', () => {
 });
 
 // one pushed stream, no polling
-new EventSource('/api/events').onmessage = e => {
+const es = new EventSource('/api/events');
+
+// auto-reload: if the server restarts with new code, its build stamp changes and the
+// tab reloads itself — no more manual hard-refresh, no more frozen tabs.
+let build = null;
+es.addEventListener('build', e => {
+  if (build !== null && build !== e.data) location.reload();
+  build = e.data;
+});
+
+es.onmessage = e => {
   const state = JSON.parse(e.data);
   const seen = new Set(state.map(a => a.name));
   for (const [name, rec] of els) if (!seen.has(name)) { rec.node.remove(); els.delete(name); }
