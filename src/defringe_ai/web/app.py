@@ -31,6 +31,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from ..board import Board
+from ..history import History
 from ..workspace import Workspace
 
 WEBDIR = os.path.dirname(__file__)
@@ -57,19 +58,27 @@ def build_state(home: str) -> list[dict]:
             w, h = 0, 0
         a = b["assets"][name]
         sess = m.get("session", {})
+        _hist = History.from_dict(a["history"]) if a.get("history") else History({}, "open")
         out.append({
             "name": name, "x": a["x"], "y": a["y"], "scale": a["scale"], "z": z,
             "head": head, "steps": len(m["steps"]), "w": w, "h": h,
             "op": m["steps"][head]["op"], "selected": name == sel,
             "editing": bool(sess.get("active")), "intent": sess.get("intent", ""),
             "rev": f'{head}-{len(m["steps"])}',
+            "locked": bool(a.get("locked", False)),
+            "dots": a.get("mask", {}).get("dots", []),
+            "outline": a.get("mask", {}).get("outline", []),
+            "can_undo": _hist.can_undo, "can_redo": _hist.can_redo,
+            "timeline": _hist.timeline(),
         })
     return out
 
 
 def _sig(state: list[dict]) -> str:
     return json.dumps([(a["name"], a["x"], a["y"], a["scale"], a["z"], a["rev"],
-                        a["selected"], a["editing"], a["intent"]) for a in state])
+                        a["selected"], a["editing"], a["intent"],
+                        a["locked"], a["dots"], a["outline"],
+                        a["can_undo"], a["can_redo"]) for a in state])
 
 
 # --- chains (server-rendered history view) ---------------------------------
@@ -138,6 +147,63 @@ def serve_preview(home: str, host: str, port: int) -> None:
         Board(home).select(os.path.basename(str(b.get("name", ""))))
         return JSONResponse({"ok": True})
 
+    async def api_lock(request):
+        b = await request.json()
+        name = os.path.basename(str(b.get("name", "")))
+        Board(home).lock(name, bool(b.get("locked")))
+        return JSONResponse({"ok": True})
+
+    async def api_dot(request):
+        b = await request.json()
+        name = os.path.basename(str(b.get("name", "")))
+        Board(home).add_dot(name, b.get("x"), b.get("y"))
+        return JSONResponse({"ok": True})
+
+    async def api_dots_clear(request):
+        b = await request.json()
+        name = os.path.basename(str(b.get("name", "")))
+        Board(home).clear_dots(name)
+        return JSONResponse({"ok": True})
+
+    async def api_isolate(request):
+        """Fill the mask outline into the image's alpha → a cutout. Runs through the
+        workspace edit pipeline (begin_edit → apply → commit) so it's undoable."""
+        from .. import imageops as ops
+
+        body = await request.json()
+        name = os.path.basename(str(body.get("name", "")))
+        bd = Board(home).sync()
+        outline = bd.get("assets", {}).get(name, {}).get("mask", {}).get("outline", [])
+        if len(outline) < 3:
+            return JSONResponse({"ok": False, "error": "no outline — connect dots first"})
+        ws = Workspace.resolve(name, home)
+        ws.begin_edit("isolate (fill mask)")
+        ws.apply("isolate", ops.fill_polygon_alpha, {"polygon": outline})
+        ws.commit_edit()
+        return JSONResponse({"ok": True})
+
+    async def api_undo(request):
+        b = await request.json()
+        Board(home).undo(os.path.basename(str(b.get("name", ""))))
+        return JSONResponse({"ok": True})
+
+    async def api_redo(request):
+        b = await request.json()
+        Board(home).redo(os.path.basename(str(b.get("name", ""))))
+        return JSONResponse({"ok": True})
+
+    async def api_connect(request):
+        """Connect an asset's mask dots into a boundary polygon: convex hull, then snap
+        inward. Deterministic — stored on the mask and pushed back over SSE."""
+        from ..imageops import hull_snap
+
+        body = await request.json()
+        name = os.path.basename(str(body.get("name", "")))
+        bd = Board(home).sync()
+        dots = bd.get("assets", {}).get(name, {}).get("mask", {}).get("dots", [])
+        Board(home).set_outline(name, hull_snap(dots))
+        return JSONResponse({"ok": True, "n": len(dots)})
+
     async def image(request):
         name = os.path.basename(request.path_params["name"])
         idx = int(request.path_params["idx"])
@@ -156,6 +222,13 @@ def serve_preview(home: str, host: str, port: int) -> None:
         Route("/api/events", events),
         Route("/api/move", api_move, methods=["POST"]),
         Route("/api/select", api_select, methods=["POST"]),
+        Route("/api/lock", api_lock, methods=["POST"]),
+        Route("/api/dot", api_dot, methods=["POST"]),
+        Route("/api/dots/clear", api_dots_clear, methods=["POST"]),
+        Route("/api/connect", api_connect, methods=["POST"]),
+        Route("/api/isolate", api_isolate, methods=["POST"]),
+        Route("/api/undo", api_undo, methods=["POST"]),
+        Route("/api/redo", api_redo, methods=["POST"]),
         Route("/img/{name}/{idx:int}", image),
         Mount("/static", app=StaticFiles(directory=WEBDIR)),
     ])

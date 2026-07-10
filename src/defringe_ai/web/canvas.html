@@ -12,6 +12,43 @@
     <a href="/chains">edit chains →</a>
     <span class="hint">click to select &amp; raise · drag to move · corner to resize · pushed live</span>
   </header>
+  <aside id="tools">
+    <div class="tools-head">Tools</div>
+    <div id="tools-body" class="tools-body">
+
+      <div class="tool-group">
+        <div class="grp-label">Tool</div>
+        <div class="btn-row">
+          <button class="tool-btn active" data-tool="move" title="drag images around">✋ Move</button>
+          <button class="tool-btn" data-tool="dot" title="click an image to drop surface dots">• Dot</button>
+        </div>
+      </div>
+
+      <div class="tool-group">
+        <div class="grp-label">Selected image</div>
+        <div id="sel-name" class="sel-name">— none —</div>
+        <button id="lock-btn" class="wide-btn" disabled>🔓 Lock image</button>
+      </div>
+
+      <div class="tool-group">
+        <div class="grp-label">History</div>
+        <div class="btn-row">
+          <button id="undo-btn" class="tool-btn" disabled title="Ctrl+Z">↶ Undo</button>
+          <button id="redo-btn" class="tool-btn" disabled title="Ctrl+Shift+Z">↷ Redo</button>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </div>
+
+      <div class="tool-group">
+        <div class="grp-label">Mask</div>
+        <div id="dot-count" class="muted">0 dots</div>
+        <button id="connect-dots" class="wide-btn" disabled>Connect dots (hull → snap)</button>
+        <button id="isolate" class="wide-btn" disabled>Cut out (fill mask → alpha)</button>
+        <button id="clear-dots" class="wide-btn" disabled>Clear dots</button>
+      </div>
+
+    </div>
+  </aside>
   <div id="canvas"></div>
   <script src="/static/canvas.js"></script>
 </body>

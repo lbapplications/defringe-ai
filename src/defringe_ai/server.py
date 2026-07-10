@@ -39,7 +39,7 @@ mcp = FastMCP("defringe-ai")
 TAXONOMY = {
     "session":   ["edit", "cancel", "commit"],          # open/close an edit transaction
     "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask", "canny"],
-    "shape":     ["draw_shape"],                         # draw primitives onto the image
+    "shape":     ["draw_shape", "draw_line"],           # draw primitives onto the image
     "annotate":  ["mark"],                               # drop debug/seed dots
     "arrange":   ["move", "select"],                     # canvas layout — not gated
     "workspace": ["open_asset", "list_workspaces", "list_shapes", "status", "undo", "redo", "collapse", "export"],
@@ -161,6 +161,17 @@ def draw_shape(shape: str = "circle", x: int = -1, y: int = -1, width: int = -1,
     return {**st, "drew": {"shape": shape, "anchor": anchor,
                            "center": list(g["center"]), "bbox": list(g["box"])},
             "clipped": g["clipped"]}
+
+
+@mcp.tool()
+def draw_line(x1: int, y1: int, x2: int, y2: int, color: str = "red",
+              thickness: int = 2, dotted: bool = False, workspace: str = "") -> dict:
+    """[shape - gated] Draw a straight line from (x1,y1) to (x2,y2) - (x,y) top-left
+    origin, x->right, y->down. dotted=True gives a see-through dotted guide (good for
+    crosshairs). Default colour red. Gated: call edit(...) first; cancel()/commit() to end."""
+    st = _apply("draw_line", ops.draw_line, workspace,
+                x1=x1, y1=y1, x2=x2, y2=y2, color=color, thickness=thickness, dotted=dotted)
+    return {**st, "line": {"from": [x1, y1], "to": [x2, y2], "dotted": dotted, "color": color}}
 
 
 # For every tool below, `workspace` is optional: name it to target a specific asset,
@@ -330,6 +341,16 @@ def main() -> None:
     cn.add_argument("--lo", type=int, default=100)
     cn.add_argument("--hi", type=int, default=200)
 
+    ln = sub.add_parser("line", help="draw a line (x1 y1 x2 y2) - gated; --dotted for dotted")
+    ln.add_argument("x1", type=int)
+    ln.add_argument("y1", type=int)
+    ln.add_argument("x2", type=int)
+    ln.add_argument("y2", type=int)
+    ln.add_argument("workspace", nargs="?", default="")
+    ln.add_argument("--color", default="red")
+    ln.add_argument("--thickness", type=int, default=2)
+    ln.add_argument("--dotted", action="store_true")
+
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     srv.add_argument("--host", default="127.0.0.1")
@@ -405,6 +426,18 @@ def main() -> None:
                 raise ValueError("no active edit session — run `edit \"<intent>\"` first")
             _print(ws.apply("canny", ops.canny, {"lo": args.lo, "hi": args.hi}))
             print(f"  canny edge map (lo={args.lo}, hi={args.hi})")
+        except ValueError as e:
+            print(f"  REFUSED: {e}")
+    elif args.cmd == "line":
+        try:
+            ws = Workspace.resolve(args.workspace, HOME)
+            if not ws.in_session():
+                raise ValueError("no active edit session - run `edit \"<intent>\"` first")
+            _print(ws.apply("draw_line", ops.draw_line,
+                            {"x1": args.x1, "y1": args.y1, "x2": args.x2, "y2": args.y2,
+                             "color": args.color, "thickness": args.thickness, "dotted": args.dotted}))
+            print(f"  line ({args.x1},{args.y1})->({args.x2},{args.y2}) "
+                  f"{'dotted ' if args.dotted else ''}{args.color}")
         except ValueError as e:
             print(f"  REFUSED: {e}")
     else:  # serve (default)

@@ -93,9 +93,13 @@ dark+light checkerboard to judge alpha edges).
 }
 ```
 
-## Tools (v0)
+## Tools
 
-**Transforms** — each applies to the active workspace's `HEAD`:
+Every tool is a deterministic `RGBA (H,W,4)` → `RGBA` transform on the active workspace's
+`HEAD` (OpenCV does the drawing/geometry, NumPy holds the pixels). Pass an optional
+`workspace` to target a specific asset, or omit it to act on the one you touched last.
+
+**Transforms**
 
 | Tool | Does |
 |---|---|
@@ -106,22 +110,66 @@ dark+light checkerboard to judge alpha edges).
 | **`defringe`** ⭐ | erode the alpha edge N px to drop the matte fringe, then **burn** the remaining edge pixels so a white/halo rim melts into a dark background |
 | `upscale` | lanczos3 resample + gentle sharpen (holds linework; adds no real detail) |
 | `silhouette_mask` | emit just the alpha shape for CSS `mask-image` tricks |
+| `canny` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal* |
 
-**Workspace controls:** `undo`, `redo`, `status`, `collapse`, `export`, `move` (place an
-asset on the canvas), `list_workspaces`.
+**Annotate & shapes** — for flagging locations and drawing guides (burned into pixels):
+
+| Tool | Does |
+|---|---|
+| `mark` | drop filled dots at a list of `[x,y]` points |
+| `draw_shape` | one registered primitive — circle / ellipse / square / rectangle / triangle — placed by an `anchor` + bounding box; `fill`, `color`, `thickness` |
+| `draw_line` | a straight line `(x1,y1)→(x2,y2)`, solid or dotted (a see-through guide) |
+
+### Isolation — the cutout, via seed dots ⭐
+
+The headline workflow: turn a subject on a busy or fade-to-white background into a clean
+matte, deterministically, by tracing a **rough** boundary. Value-based keying can't do
+this (it punches holes in light interior areas); supplying the boundary fixes it.
+
+Every image carries an **invisible mask layer** — annotation that rides *with* the image
+(in image-pixel space), separate from the pixel edit chain:
+
+1. **Dots** — drop rough seed points around the subject's edge (the **Dot** tool on the
+   edit screen, or the `mark` seed convention). They don't need to be precise.
+2. **`hull_snap(points)`** — connect the dots into a boundary: take the **convex hull**,
+   then **snap inward**, greedily pulling each hull edge toward the nearest leftover dot
+   until the outline passes through *all* of them. Fully deterministic — the same dots
+   always give the same concave silhouette. (`convex_hull(points)` is the outer-wrapper
+   step on its own; `dig_ratio` stops the snap early to stay near-convex.)
+3. **`fill_polygon_alpha(img, polygon)`** — fill that outline into alpha (opaque inside,
+   transparent outside) = **the cutout**. No interior holes.
+4. **`defringe`** — optional final pass to melt any residual matte rim.
+
+Rough seeds in, tight matte out — the model places dots, looks at the cut, and nudges.
+
+**Workspace / board controls:** `undo`, `redo` (per-image, two-level — see below),
+`status`, `collapse`, `export`, `move` (place an asset on the canvas), `list_workspaces`.
 
 ### The edit screen
 
 `serve --preview` opens a **canvas** at the preview URL: every asset's current image,
-placed at its `(x,y)`, on a checkerboard. Assets are movable **by the agent** (the
-`move` tool arranges the layout while it works) and **by you** (drag them — the drop
-persists back to the workspace). It polls live, so agent moves and edits appear without
-fighting a drag in progress. `/chains` shows the per-asset reversible edit history.
+placed at its `(x,y)`, on a checkerboard, pushed live over **SSE** (no polling; the tab
+auto-reloads when the server restarts). A **left toolbox** drives the isolation flow:
+
+- **Move** / **Dot** tools — drag images, or click to drop surface dots
+- **Lock** — pin an image so clicks land as dots instead of dragging it
+- **Connect dots (hull → snap)** → **Cut out (fill mask → alpha)** — the isolation path
+- **Undo / Redo** (Ctrl-Z / Ctrl-Shift-Z) — **per-image, two-level**: placing dots bundles
+  into one timeline action, but each dot is individually undoable while you're still
+  placing them; any other action collapses the bundle. A live timeline shows the history.
+
+Assets are movable by the agent (the `move` tool) and by you (drag — the drop persists).
+`/chains` shows the per-asset reversible pixel edit history.
 
 ## Roadmap
 
-- [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`)
+- [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`, `canny`)
 - [x] on-disk workspace with reversible undo/redo + `collapse` (verify), shared by CLI and MCP
+- [x] annotate + shapes (`mark`, `draw_shape`, `draw_line`) and the live edit screen (SSE, left toolbox)
+- [x] **isolation** — seed dots → `hull_snap` (convex hull → snap inward) → `fill_polygon_alpha`
+- [x] per-image two-level undo (dots bundle into one action, each individually undoable mid-focus)
+- [ ] **fully-automatic isolation** — `canny → close gaps → findContours → fill largest contour` (no seed dots)
+- [ ] **edge-snap** — pull the `hull_snap` outline onto the nearest strong image edge for a pixel-tight matte
 - [ ] tests + a sample asset sheet
 - [ ] `tint`/`recolor`, `feather`, `drop-shadow`, `flip`/`rotate`
 - [ ] `remove_bg` (ML via `rembg`, `pip install defringe-ai[ml]`) for photographic inputs
