@@ -117,7 +117,7 @@ def commit(workspace: str = "") -> dict:
 @mcp.tool()
 def list_shapes() -> dict:
     """The registered shapes, anchors, and named colours that draw_shape understands."""
-    return {"shapes": list(ops.SHAPES), "anchors": list(ops._ANCHORS), "colors": list(ops._NAMED_COLORS)}
+    return {"shapes": list(ops.Shape.NAMES), "anchors": list(ops.Shape.ANCHORS), "colors": list(ops.Color.NAMED)}
 
 
 @mcp.tool()
@@ -125,7 +125,7 @@ def mark(points: list[list[int]], radius: int = 4, color: str = "black", workspa
     """[annotate · gated] Drop a tiny filled dot at each [x, y] in `points` — for flagging
     seed points or locations to eyeball. Coords are (x, y), top-left origin, x→right,
     y→down. Points outside the frame are skipped. Gated: call edit(...) first."""
-    st = _apply("mark", ops.mark, workspace, points=points, radius=radius, color=color)
+    st = _apply("mark", ops.Annotate.mark, workspace, points=points, radius=radius, color=color)
     return {**st, "marked": len(points), "points": points}
 
 
@@ -153,10 +153,10 @@ def draw_shape(shape: str = "circle", x: int = -1, y: int = -1, width: int = -1,
         raise ValueError("'draw_shape' is gated: no active edit session. "
                          'Call edit("<what you want>") first; cancel()/commit() to end.')
     h, w = ws.current_array().shape[:2]
-    g = ops.resolve_box(w, h, x=None if x < 0 else x, y=None if y < 0 else y,
+    g = ops.Shape.resolve_box(w, h, x=None if x < 0 else x, y=None if y < 0 else y,
                         width=None if width < 0 else width,
                         height=None if height < 0 else height, anchor=anchor)
-    st = ws.apply("draw_shape", ops.draw_shape,
+    st = ws.apply("draw_shape", ops.Shape.draw_shape,
                   {"shape": shape, "box": g["box"], "color": color, "fill": fill, "thickness": thickness})
     return {**st, "drew": {"shape": shape, "anchor": anchor,
                            "center": list(g["center"]), "bbox": list(g["box"])},
@@ -169,7 +169,7 @@ def draw_line(x1: int, y1: int, x2: int, y2: int, color: str = "red",
     """[shape - gated] Draw a straight line from (x1,y1) to (x2,y2) - (x,y) top-left
     origin, x->right, y->down. dotted=True gives a see-through dotted guide (good for
     crosshairs). Default colour red. Gated: call edit(...) first; cancel()/commit() to end."""
-    st = _apply("draw_line", ops.draw_line, workspace,
+    st = _apply("draw_line", ops.Shape.draw_line, workspace,
                 x1=x1, y1=y1, x2=x2, y2=y2, color=color, thickness=thickness, dotted=dotted)
     return {**st, "line": {"from": [x1, y1], "to": [x2, y2], "dotted": dotted, "color": color}}
 
@@ -181,38 +181,38 @@ def draw_line(x1: int, y1: int, x2: int, y2: int, color: str = "red",
 def key_background(bg: str = "white", lo: int = 40, hi: int = 90, workspace: str = "") -> dict:
     """Threshold a flat background to alpha with a soft lo..hi ramp.
     bg is 'white', 'black', '#rrggbb', or 'r,g,b'."""
-    return _apply("key_background", ops.key_background, workspace, bg=bg, lo=lo, hi=hi)
+    return _apply("key_background", ops.Transform.key_background, workspace, bg=bg, lo=lo, hi=hi)
 
 
 @mcp.tool()
 def trim_alpha(workspace: str = "") -> dict:
     """Crop to the content bounding box (alpha > 0)."""
-    return _apply("trim_alpha", ops.trim_alpha, workspace)
+    return _apply("trim_alpha", ops.Transform.trim_alpha, workspace)
 
 
 @mcp.tool()
 def crop(x: int, y: int, w: int, h: int, workspace: str = "") -> dict:
     """Carve a sub-rect out of the image (extract-region)."""
-    return _apply("crop", ops.crop, workspace, x=x, y=y, w=w, h=h)
+    return _apply("crop", ops.Transform.crop, workspace, x=x, y=y, w=w, h=h)
 
 
 @mcp.tool()
 def defringe(erode_px: int = 1, burn: float = 0.45, rim_lum: float = 135.0, workspace: str = "") -> dict:
     """Erode the alpha edge to drop the matte fringe, then burn the remaining edge
     pixels so a white/halo rim melts into a dark background."""
-    return _apply("defringe", ops.defringe, workspace, erode_px=erode_px, burn=burn, rim_lum=rim_lum)
+    return _apply("defringe", ops.Transform.defringe, workspace, erode_px=erode_px, burn=burn, rim_lum=rim_lum)
 
 
 @mcp.tool()
 def upscale(factor: float = 2.0, sharpen: float = 0.6, workspace: str = "") -> dict:
     """Lanczos3 resample + gentle sharpen. Holds linework; adds no real detail."""
-    return _apply("upscale", ops.upscale, workspace, factor=factor, sharpen=sharpen)
+    return _apply("upscale", ops.Transform.upscale, workspace, factor=factor, sharpen=sharpen)
 
 
 @mcp.tool()
 def silhouette_mask(workspace: str = "") -> dict:
     """Emit just the alpha shape (white RGB + original alpha) for CSS mask-image."""
-    return _apply("silhouette_mask", ops.silhouette_mask, workspace)
+    return _apply("silhouette_mask", ops.Transform.silhouette_mask, workspace)
 
 
 @mcp.tool()
@@ -220,7 +220,7 @@ def canny(lo: int = 100, hi: int = 200, workspace: str = "") -> dict:
     """[transform · gated] Canny edge map — white edges on black. `lo`/`hi` are the
     hysteresis thresholds (100/200 is the classic pairing; lower them to catch fainter
     edges, raise them to keep only strong ones). The edge *signal*, not an isolation."""
-    return _apply("canny", ops.canny, workspace, lo=lo, hi=hi)
+    return _apply("canny", ops.Transform.canny, workspace, lo=lo, hi=hi)
 
 
 # --- workspace controls (agent-facing too) ---------------------------------
@@ -397,11 +397,11 @@ def main() -> None:
             if not ws.in_session():
                 raise ValueError("no active edit session — run `edit \"<intent>\"` first")
             h, w = ws.current_array().shape[:2]
-            g = ops.resolve_box(w, h, x=None if args.x < 0 else args.x,
+            g = ops.Shape.resolve_box(w, h, x=None if args.x < 0 else args.x,
                                 y=None if args.y < 0 else args.y,
                                 width=None if args.width < 0 else args.width,
                                 height=None if args.height < 0 else args.height, anchor=args.anchor)
-            st = ws.apply("draw_shape", ops.draw_shape,
+            st = ws.apply("draw_shape", ops.Shape.draw_shape,
                           {"shape": args.shape, "box": g["box"], "color": args.color,
                            "fill": args.fill, "thickness": args.thickness})
             _print(st)
@@ -415,7 +415,7 @@ def main() -> None:
             ws = Workspace.resolve(args.workspace, HOME)
             if not ws.in_session():
                 raise ValueError("no active edit session — run `edit \"<intent>\"` first")
-            _print(ws.apply("mark", ops.mark, {"points": pts, "radius": args.radius, "color": args.color}))
+            _print(ws.apply("mark", ops.Annotate.mark, {"points": pts, "radius": args.radius, "color": args.color}))
             print(f"  marked {len(pts)} point(s): {pts}")
         except ValueError as e:
             print(f"  REFUSED: {e}")
@@ -424,7 +424,7 @@ def main() -> None:
             ws = Workspace.resolve(args.workspace, HOME)
             if not ws.in_session():
                 raise ValueError("no active edit session — run `edit \"<intent>\"` first")
-            _print(ws.apply("canny", ops.canny, {"lo": args.lo, "hi": args.hi}))
+            _print(ws.apply("canny", ops.Transform.canny, {"lo": args.lo, "hi": args.hi}))
             print(f"  canny edge map (lo={args.lo}, hi={args.hi})")
         except ValueError as e:
             print(f"  REFUSED: {e}")
@@ -433,7 +433,7 @@ def main() -> None:
             ws = Workspace.resolve(args.workspace, HOME)
             if not ws.in_session():
                 raise ValueError("no active edit session - run `edit \"<intent>\"` first")
-            _print(ws.apply("draw_line", ops.draw_line,
+            _print(ws.apply("draw_line", ops.Shape.draw_line,
                             {"x1": args.x1, "y1": args.y1, "x2": args.x2, "y2": args.y2,
                              "color": args.color, "thickness": args.thickness, "dotted": args.dotted}))
             print(f"  line ({args.x1},{args.y1})->({args.x2},{args.y2}) "

@@ -1,0 +1,128 @@
+"""`Transform` — pixel transforms: matte extraction + cleanup.
+
+The core "non-painting Photoshop" ops: pull a subject off a background, tidy the matte,
+resample, and read edges. Every method is RGBA -> RGBA and deterministic.
+"""
+
+from __future__ import annotations
+
+import cv2
+import numpy as np
+from PIL import Image
+
+from ._core import RGBA, Color
+
+
+def _luminance(rgb: np.ndarray) -> np.ndarray:
+    """Rec.601 luminance, float32 (H, W)."""
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def _min3x3(a: np.ndarray) -> np.ndarray:
+    """3x3 neighbourhood minimum == a single-step erosion of a uint8 plane."""
+    return cv2.erode(a, np.ones((3, 3), np.uint8))
+
+
+class Transform:
+    """Matte extraction + pixel cleanup. All methods take and return RGBA (H,W,4)."""
+
+    @staticmethod
+    def key_background(img: RGBA, bg: str = "white", lo: int = 40, hi: int = 90) -> RGBA:
+        """Threshold a flat background to alpha with a soft LO..HI ramp for AA edges.
+
+        A per-pixel "foreground-ness" score is built, then mapped: alpha = 0 below LO,
+        255 above HI, linear between.
+          - bg="black": score = max(r,g,b)          (bright subject on black -> keep)
+          - bg="white": score = 255 - luminance     (dark subject on white  -> keep)
+          - bg="#rrggbb": score = distance from that colour, scaled to 0..255
+        """
+        rgb = img[..., :3].astype(np.float32)
+        if bg == "black":
+            score = rgb.max(axis=-1)
+        elif bg == "white":
+            score = 255.0 - _luminance(rgb)
+        else:
+            key = Color.parse_rgb(bg).astype(np.float32)
+            dist = np.linalg.norm(rgb - key, axis=-1)      # 0..~441
+            score = np.clip(dist / (441.673 / 255.0), 0, 255)
+        ramp = np.clip((score - lo) * (255.0 / max(hi - lo, 1)), 0, 255)
+        out = img.copy()
+        out[..., 3] = ramp.astype(np.uint8)
+        return out
+
+    @staticmethod
+    def trim_alpha(img: RGBA) -> RGBA:
+        """Crop to the bounding box of alpha > 0. Unchanged if fully transparent."""
+        ys, xs = np.nonzero(img[..., 3])
+        if len(xs) == 0:
+            return img
+        return img[ys.min(): ys.max() + 1, xs.min(): xs.max() + 1]
+
+    @staticmethod
+    def crop(img: RGBA, x: int, y: int, w: int, h: int) -> RGBA:
+        """Carve out a sub-rect (clamped to bounds)."""
+        H, W = img.shape[:2]
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(W, x + w), min(H, y + h)
+        return img[y0:y1, x0:x1]
+
+    @staticmethod
+    def defringe(img: RGBA, erode_px: int = 1, burn: float = 0.45,
+                 rim_lum: float = 135.0, transparent_below: int = 16) -> RGBA:
+        """Kill the white matte fringe left by keying art off a light background.
+
+        1) E = erode the alpha inward `erode_px` (3x3 MIN each step) -> shrinks matte.
+        2) An edge pixel is one where the eroded alpha is not fully opaque (E < 250),
+           OR it touches a near-transparent neighbour AND is bright (lum > rim_lum).
+        3) Burn (darken) edge RGB by `burn` so the rim reads as a dark line that melts
+           into a dark background instead of glowing. Alpha is replaced by E.
+        """
+        alpha = img[..., 3]
+        e = alpha
+        for _ in range(max(erode_px, 1)):
+            e = _min3x3(e)
+        neighbour_min = _min3x3(alpha)
+        touches_transparent = neighbour_min < transparent_below
+        lum = _luminance(img[..., :3].astype(np.float32))
+        keep = e > 0
+        edge = keep & ((e < 250) | (touches_transparent & (lum > rim_lum)))
+        out = img.copy().astype(np.float32)
+        out[edge, :3] *= burn
+        out = out.astype(np.uint8)
+        out[..., 3] = e
+        return out
+
+    @staticmethod
+    def upscale(img: RGBA, factor: float = 2.0, sharpen: float = 0.6) -> RGBA:
+        """Lanczos3 resample + a gentle unsharp pass. Holds linework; adds no real detail."""
+        h, w = img.shape[:2]
+        pil = Image.fromarray(img, mode="RGBA").resize(
+            (round(w * factor), round(h * factor)), Image.LANCZOS)
+        if sharpen > 0:
+            from PIL import ImageFilter
+            pil = pil.filter(
+                ImageFilter.UnsharpMask(radius=1.0, percent=int(sharpen * 100), threshold=1))
+        return np.asarray(pil)
+
+    @staticmethod
+    def silhouette_mask(img: RGBA) -> RGBA:
+        """Emit just the alpha shape (white RGB, original alpha) for CSS mask-image tricks."""
+        out = np.zeros_like(img)
+        out[..., :3] = 255
+        out[..., 3] = img[..., 3]
+        return out
+
+    @staticmethod
+    def canny(img: RGBA, lo: int = 100, hi: int = 200) -> RGBA:
+        """Canny edge map: white edges on opaque black (mirrors cv2.Canny(frame, lo, hi)).
+
+        The hysteresis thresholds are `lo` (weak) and `hi` (strong) — 100/200 is the
+        classic pairing. This is the *edge signal*, not an isolation — closing the gaps +
+        findContours + fill would turn it into a cutout (see Geometry for the seeded path).
+        """
+        edges = cv2.Canny(img[..., :3], lo, hi)      # (H, W) uint8, 0 or 255
+        out = np.zeros_like(img)
+        out[..., :3] = edges[..., None]              # white where an edge fired
+        out[..., 3] = 255                            # opaque so the black bg reads on the canvas
+        return out

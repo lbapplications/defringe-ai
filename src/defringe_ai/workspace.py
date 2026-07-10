@@ -54,9 +54,9 @@ class Workspace:
         local_src = os.path.join(root, "source", os.path.basename(src_path))
         shutil.copy2(src_path, local_src)
 
-        img = ops.load(local_src)
+        img = ops.Io.load(local_src)
         step_file = os.path.join("history", "0000-open.png")
-        ops.save(img, os.path.join(root, step_file))
+        ops.Io.save(img, os.path.join(root, step_file))
         ws._write(
             {
                 "name": name,
@@ -115,7 +115,7 @@ class Workspace:
 
         idx = len(m["steps"])
         step_file = os.path.join("history", f"{idx:04d}-{op}.png")
-        ops.save(result, os.path.join(self.root, step_file))
+        ops.Io.save(result, os.path.join(self.root, step_file))
         m["steps"].append({"op": op, "params": params, "file": step_file, "ts": _now()})
         m["head"] = idx
         self._write(m)
@@ -140,7 +140,7 @@ class Workspace:
         for st in m["steps"]:
             _rm(os.path.join(self.root, st["file"]))
         base = os.path.join("history", "0000-base.png")
-        ops.save(keep, os.path.join(self.root, base))
+        ops.Io.save(keep, os.path.join(self.root, base))
         m["steps"] = [{"op": "collapsed", "params": {}, "file": base, "ts": _now()}]
         m["head"] = 0
         self._write(m)
@@ -198,7 +198,7 @@ class Workspace:
         return os.path.join(self.root, m["steps"][m["head"]]["file"])
 
     def current_array(self) -> np.ndarray:
-        return ops.load(self.current_path())
+        return ops.Io.load(self.current_path())
 
     def status(self) -> dict:
         m = self._read()

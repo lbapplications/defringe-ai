@@ -168,7 +168,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
     async def api_isolate(request):
         """Fill the mask outline into the image's alpha → a cutout. Runs through the
         workspace edit pipeline (begin_edit → apply → commit) so it's undoable."""
-        from .. import imageops as ops
+        from ..imageops import Geometry
 
         body = await request.json()
         name = os.path.basename(str(body.get("name", "")))
@@ -178,7 +178,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
             return JSONResponse({"ok": False, "error": "no outline — connect dots first"})
         ws = Workspace.resolve(name, home)
         ws.begin_edit("isolate (fill mask)")
-        ws.apply("isolate", ops.fill_polygon_alpha, {"polygon": outline})
+        ws.apply("isolate", Geometry.fill_polygon_alpha, {"polygon": outline})
         ws.commit_edit()
         return JSONResponse({"ok": True})
 
@@ -195,13 +195,13 @@ def serve_preview(home: str, host: str, port: int) -> None:
     async def api_connect(request):
         """Connect an asset's mask dots into a boundary polygon: convex hull, then snap
         inward. Deterministic — stored on the mask and pushed back over SSE."""
-        from ..imageops import hull_snap
+        from ..imageops import Geometry
 
         body = await request.json()
         name = os.path.basename(str(body.get("name", "")))
         bd = Board(home).sync()
         dots = bd.get("assets", {}).get(name, {}).get("mask", {}).get("dots", [])
-        Board(home).set_outline(name, hull_snap(dots))
+        Board(home).set_outline(name, Geometry.hull_snap(dots))
         return JSONResponse({"ok": True, "n": len(dots)})
 
     async def image(request):
