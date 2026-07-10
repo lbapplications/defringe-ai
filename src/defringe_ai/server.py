@@ -22,6 +22,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import imageops as ops
 from .board import Board
+from .schemas import IsolateResult, MaskState
 from .workspace import HOME, Workspace, _get_active
 
 # Uncommon defaults, deliberately off the 8000/8080/3000 beaten path so the server
@@ -41,6 +42,7 @@ TAXONOMY = {
     "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask", "canny"],
     "shape":     ["draw_shape", "draw_line"],           # draw primitives onto the image
     "annotate":  ["mark"],                               # drop debug/seed dots
+    "isolate":   ["seed", "connect", "isolate", "clear_seeds"],  # dots -> outline -> matte
     "arrange":   ["move", "select"],                     # canvas layout — not gated
     "workspace": ["open_asset", "list_workspaces", "list_shapes", "status", "undo", "redo", "collapse", "export"],
 }
@@ -221,6 +223,70 @@ def canny(lo: int = 100, hi: int = 200, workspace: str = "") -> dict:
     hysteresis thresholds (100/200 is the classic pairing; lower them to catch fainter
     edges, raise them to keep only strong ones). The edge *signal*, not an isolation."""
     return _apply("canny", ops.Transform.canny, workspace, lo=lo, hi=hi)
+
+
+# --- isolate: seed -> connect -> matte (the deterministic cutout) -----------
+# Its own taxonomy category: compound board+geometry actions. `isolate` is
+# self-contained (it opens & commits its own edit where it touches pixels), so this
+# category is NOT part of the transform gate — the seed/connect/isolate flow reads
+# and writes the board mask directly.
+
+def _mask_state(name: str) -> MaskState:
+    """Read the current mask counts for an asset into a MaskState result."""
+    a = Board(HOME).sync().get("assets", {}).get(name, {})
+    m = a.get("mask", {})
+    return MaskState(workspace=name, dots=len(m.get("dots", [])),
+                     outline=len(m.get("outline", [])), locked=bool(a.get("locked", False)))
+
+
+@mcp.tool()
+def seed(points: list[list[int]], workspace: str = "") -> MaskState:
+    """[isolate] Drop rough seed dots on the asset's invisible mask, in image-pixel space.
+
+    Place points loosely around the subject's edge; precision isn't needed — `connect`
+    snaps a boundary through them. `points` is a list of `[x, y]` pairs (top-left origin)."""
+    name = _name(workspace)
+    board = Board(HOME)
+    for p in points:
+        board.add_dot(name, int(p[0]), int(p[1]))
+    return _mask_state(name)
+
+
+@mcp.tool()
+def connect(workspace: str = "") -> MaskState:
+    """[isolate] Connect the mask's seed dots into a boundary polygon: convex hull, then
+    snap inward through every dot (deterministic). Stored on the mask; run `isolate` next."""
+    name = _name(workspace)
+    b = Board(HOME).sync()
+    dots = b.get("assets", {}).get(name, {}).get("mask", {}).get("dots", [])
+    Board(HOME).set_outline(name, ops.Geometry.hull_snap(dots))
+    return _mask_state(name)
+
+
+@mcp.tool()
+def isolate(workspace: str = "") -> IsolateResult:
+    """[isolate] Cut out the subject: fill the connected boundary into alpha (transparent
+    background). Self-contained — opens and commits its own edit. Run `connect` first."""
+    name = _name(workspace)
+    b = Board(HOME).sync()
+    outline = b.get("assets", {}).get(name, {}).get("mask", {}).get("outline", [])
+    if len(outline) < 3:
+        raise ValueError("no outline — call connect() first (needs >=3 seed dots)")
+    ws = Workspace.resolve(name, HOME)
+    ws.begin_edit("isolate (fill mask)")
+    st = ws.apply("isolate", ops.Geometry.fill_polygon_alpha, {"polygon": outline})
+    ws.commit_edit()
+    return IsolateResult(workspace=name, head=st["head"], steps=st["steps"],
+                         current=st["current"], width=st["width"], height=st["height"],
+                         chain=st["chain"])
+
+
+@mcp.tool()
+def clear_seeds(workspace: str = "") -> MaskState:
+    """[isolate] Remove all seed dots and the connected outline from the asset's mask."""
+    name = _name(workspace)
+    Board(HOME).clear_dots(name)
+    return _mask_state(name)
 
 
 # --- workspace controls (agent-facing too) ---------------------------------

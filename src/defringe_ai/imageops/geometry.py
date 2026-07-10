@@ -1,8 +1,9 @@
-"""`Geometry` — dots -> outline -> matte: the deterministic isolation math.
+"""``Geometry`` — dots -> outline -> matte: the deterministic seeded-isolation math.
 
-The seeded-isolation path (repo tool #1). Rough seed dots become a concave boundary via
-convex-hull-then-snap-inward, and the boundary fills into alpha as a cutout. Pure point/
-polygon math + one `fillPoly`; no colour, no I/O — depends only on `_core.RGBA`.
+Rough seed dots become a concave boundary (convex hull, then snap inward), and the
+boundary fills into alpha as a cutout. All point/edge math is **vectorised NumPy** — the
+snap computes every point-to-edge distance as one broadcast, no per-point Python loop.
+Depends only on ``utils`` (not even ``Color``).
 """
 
 from __future__ import annotations
@@ -10,26 +11,37 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from ._core import RGBA
+from .utils import RGBA
 
 
-def _dedupe(points) -> list[tuple[int, int]]:
-    out, seen = [], set()
-    for p in points:
-        q = (int(p[0]), int(p[1]))
-        if q not in seen:
-            seen.add(q)
-            out.append(q)
-    return out
+def _dedupe(points) -> np.ndarray:
+    """Drop duplicate points, preserving first-seen order. Returns an ``(N, 2)`` int array."""
+    arr = np.asarray(points, dtype=np.int64).reshape(-1, 2)
+    if len(arr) == 0:
+        return arr
+    _, idx = np.unique(arr, axis=0, return_index=True)
+    return arr[np.sort(idx)]
 
 
-def _seg_dist(p, a, b) -> float:
-    """Distance from point p to segment a->b (all (x, y))."""
-    p, a, b = (np.asarray(v, np.float64) for v in (p, a, b))
-    ab = b - a
-    denom = float(ab @ ab)
-    t = 0.0 if denom == 0 else float(np.clip((p - a) @ ab / denom, 0.0, 1.0))
-    return float(np.hypot(*(p - (a + t * ab))))
+def _seg_dist_matrix(pts: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Distance from every point to every segment, vectorised.
+
+    Args:
+        pts: ``(P, 2)`` query points.
+        a: ``(E, 2)`` segment start points.
+        b: ``(E, 2)`` segment end points (paired with ``a``).
+
+    Returns:
+        An ``(E, P)`` array where ``[e, p]`` is the distance from point ``p`` to segment
+        ``e``. Edge-major so a flattened ``argmin`` breaks ties by (edge, point).
+    """
+    ab = b - a                                   # (E, 2)
+    ab2 = (ab * ab).sum(1)                        # (E,)
+    ap = pts[None, :, :] - a[:, None, :]          # (E, P, 2)
+    t = (ap * ab[:, None, :]).sum(2) / np.where(ab2[:, None] == 0, 1.0, ab2[:, None])
+    t = np.clip(t, 0.0, 1.0)                       # (E, P)
+    proj = a[:, None, :] + t[:, :, None] * ab[:, None, :]   # (E, P, 2)
+    return np.linalg.norm(pts[None, :, :] - proj, axis=2)   # (E, P)
 
 
 class Geometry:
@@ -37,54 +49,75 @@ class Geometry:
 
     @staticmethod
     def convex_hull(points) -> list[list[int]]:
-        """Outermost enclosing polygon of a point set — the deterministic convex hull.
+        """Compute the outermost enclosing polygon of a point set (the convex hull).
 
-        Returns the hull vertices in cyclic (boundary) order, a subset of the input.
-        Interior points are dropped (that's what 'convex' means)."""
+        Args:
+            points: An iterable of ``[x, y]`` points (image-pixel space).
+
+        Returns:
+            The hull vertices in cyclic boundary order — a subset of the deduplicated
+            input, with interior points dropped. Fewer than 3 unique points are returned
+            as-is.
+        """
         pts = _dedupe(points)
         if len(pts) < 3:
-            return [list(p) for p in pts]
-        hull = cv2.convexHull(np.array(pts, np.int32).reshape(-1, 1, 2), returnPoints=True)
+            return pts.tolist()
+        hull = cv2.convexHull(pts.astype(np.int32).reshape(-1, 1, 2), returnPoints=True)
         return [[int(p[0][0]), int(p[0][1])] for p in hull]
 
     @staticmethod
     def hull_snap(points, dig_ratio: float = 0.0) -> list[list[int]]:
-        """Convex hull, then SNAP INWARD to recover concavities — deterministically.
+        """Trace a boundary through seed dots: convex hull, then snap inward.
 
-        1. Convex hull = the outer boundary (ignores every concave/interior dot).
-        2. Repeatedly take the not-yet-used dot closest to any current boundary edge and
-           insert it into that edge, carving the outline inward toward it. Ties break by
-           (distance, edge index, point index) so the result is a pure function of the input.
+        Starts from the convex hull (which ignores concave dots), then repeatedly inserts
+        the not-yet-used dot closest to any current boundary edge into that edge, carving
+        the outline inward until it passes through every dot. Deterministic: ties break by
+        (distance, edge index, point index), so the same dots always give the same polygon.
 
-        `dig_ratio`: stop digging an edge once the nearest inside point is farther than
-        `dig_ratio * edge_length` (keeps it near-convex). Default 0.0 = dig until every dot
-        lies on the outline (the full hand-traced silhouette)."""
+        Args:
+            points: Seed dots as ``[x, y]`` pairs (rough is fine — the boundary snaps to
+                whatever the caller placed).
+            dig_ratio: Stop digging an edge once its nearest inside point is farther than
+                ``dig_ratio * edge_length`` (keeps the result near-convex). Default ``0.0``
+                digs until every dot lies on the outline.
+
+        Returns:
+            The boundary polygon as an ordered list of ``[x, y]`` vertices. Fewer than 3
+            unique points are returned as-is.
+        """
         pts = _dedupe(points)
         if len(pts) < 3:
-            return [list(p) for p in pts]
-        boundary = [tuple(v) for v in Geometry.convex_hull(pts)]
-        used = set(boundary)
-        remaining = [p for p in pts if p not in used]
-        while remaining:
-            best = None                                    # (dist, edge_i, point_i)
-            for ei in range(len(boundary)):
-                a, b = boundary[ei], boundary[(ei + 1) % len(boundary)]
-                for pi, p in enumerate(remaining):
-                    key = (_seg_dist(p, a, b), ei, pi)
-                    if best is None or key < best:
-                        best = key
-            d, ei, pi = best
+            return pts.tolist()
+        boundary = [tuple(int(v) for v in p) for p in Geometry.convex_hull(pts)]
+        used = {p for p in boundary}
+        remaining = np.array([p for p in pts.tolist() if tuple(p) not in used], dtype=np.int64)
+
+        while len(remaining):
+            b = np.array(boundary, dtype=np.int64)              # (E, 2)
+            nxt = np.roll(b, -1, axis=0)                        # edge i: b[i] -> nxt[i]
+            d = _seg_dist_matrix(remaining, b, nxt)             # (E, P)
+            flat = int(np.argmin(d))                            # first min in (edge, point) order
+            ei, pi = divmod(flat, len(remaining))
             if dig_ratio > 0:
-                a, b = boundary[ei], boundary[(ei + 1) % len(boundary)]
-                if d > dig_ratio * float(np.hypot(b[0] - a[0], b[1] - a[1])):
+                edge_len = float(np.hypot(*(nxt[ei] - b[ei])))
+                if d[ei, pi] > dig_ratio * edge_len:
                     break
-            boundary.insert(ei + 1, remaining.pop(pi))
+            boundary.insert(ei + 1, tuple(int(v) for v in remaining[pi]))
+            remaining = np.delete(remaining, pi, axis=0)
         return [list(p) for p in boundary]
 
     @staticmethod
     def fill_polygon_alpha(img: RGBA, polygon) -> RGBA:
-        """Cut out the subject: keep RGB, set alpha=255 inside the polygon and 0 outside.
-        The deterministic isolation payoff — feed it hull_snap's outline to get a matte."""
+        """Cut out the subject by filling a boundary polygon into the alpha channel.
+
+        Args:
+            img: The source ``(H, W, 4)`` RGBA image (RGB is preserved).
+            polygon: The boundary as ``[x, y]`` vertices, e.g. from :meth:`hull_snap`.
+
+        Returns:
+            A new RGBA array with alpha = 255 inside the polygon and 0 outside. If the
+            polygon has fewer than 3 vertices the result is fully transparent.
+        """
         H, W = img.shape[:2]
         out = img.copy()
         mask = np.zeros((H, W), np.uint8)

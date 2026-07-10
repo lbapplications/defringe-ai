@@ -16,7 +16,9 @@ that match what you're about to do:
 |---|---|
 | [repo-intent](.claude/rules/repo-intent.md) | branch, commit, open a PR, or add any structure/ceremony (spoiler: master-only, no PRs, edit in place) |
 | [architecture](.claude/rules/architecture.md) | navigate or add code — the layers and what stays orthogonal to what |
-| [tools](.claude/rules/tools.md) | add or edit an image tool — the class-set taxonomy + the edit-session gate |
+| [tools](.claude/rules/tools.md) | add or edit an image tool — a tool isn't real until it's MCP-registered; NumPy/Pydantic/README standards + the gate |
+| [orthogonalization](.claude/rules/orthogonalization.md) | add a class/module, move code between areas, or surface a taxonomy shift |
+| [docstrings](.claude/rules/docstrings.md) | write or edit ANY function — Google-style, kept in sync |
 | [coordinates](.claude/rules/coordinates.md) | do any geometry / pixel-indexing / dot / drawing work (the `arr[y,x]` trap) |
 | [undo](.claude/rules/undo.md) | touch undo, `history.py`, or the board mask |
 | [server-ops](.claude/rules/server-ops.md) | start / stop / restart the live server, or debug a change not showing up |

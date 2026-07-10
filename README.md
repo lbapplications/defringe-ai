@@ -93,13 +93,15 @@ dark+light checkerboard to judge alpha edges).
 }
 ```
 
-## Tools
+## What this is & how to use it — the tools
 
-Every tool is a deterministic `RGBA (H,W,4)` → `RGBA` transform on the active workspace's
-`HEAD` (OpenCV does the drawing/geometry, NumPy holds the pixels). Pass an optional
-`workspace` to target a specific asset, or omit it to act on the one you touched last.
+Each tool is an **MCP call** your agent makes (and a **CLI subcommand** you can run). It
+edits the active workspace's `HEAD` and returns the new state, so the agent re-reads the
+result and self-corrects. All pixel/point math is vectorised NumPy; OpenCV rasterises.
+Pass an optional `workspace` to target a specific asset, or omit it to act on the one you
+touched last.
 
-**Transforms**
+**Transforms** — matte extraction + cleanup (gated: `edit(...)` → tools → `commit`/`cancel`):
 
 | Tool | Does |
 |---|---|
@@ -120,27 +122,24 @@ Every tool is a deterministic `RGBA (H,W,4)` → `RGBA` transform on the active 
 | `draw_shape` | one registered primitive — circle / ellipse / square / rectangle / triangle — placed by an `anchor` + bounding box; `fill`, `color`, `thickness` |
 | `draw_line` | a straight line `(x1,y1)→(x2,y2)`, solid or dotted (a see-through guide) |
 
-### Isolation — the cutout, via seed dots ⭐
+### Isolation — the cutout, via seed dots ⭐ (the `isolate` tools)
 
 The headline workflow: turn a subject on a busy or fade-to-white background into a clean
 matte, deterministically, by tracing a **rough** boundary. Value-based keying can't do
-this (it punches holes in light interior areas); supplying the boundary fixes it.
+this (it punches holes in light interior areas); supplying the boundary fixes it. Every
+image carries an **invisible mask layer** — dots in image-pixel space that ride *with* the
+image, separate from the pixel edit chain.
 
-Every image carries an **invisible mask layer** — annotation that rides *with* the image
-(in image-pixel space), separate from the pixel edit chain:
+| Tool | Does |
+|---|---|
+| `seed [[x,y],…]` | drop rough seed dots around the subject's edge (precision not needed) |
+| `connect` | join the dots into a boundary — **convex hull, then snap inward** through every dot (deterministic; the same dots always give the same concave silhouette) |
+| **`isolate`** ⭐ | fill that boundary into alpha = **the cutout** (transparent background, no interior holes) |
+| `clear_seeds` | wipe the dots + outline and start over |
 
-1. **Dots** — drop rough seed points around the subject's edge (the **Dot** tool on the
-   edit screen, or the `mark` seed convention). They don't need to be precise.
-2. **`hull_snap(points)`** — connect the dots into a boundary: take the **convex hull**,
-   then **snap inward**, greedily pulling each hull edge toward the nearest leftover dot
-   until the outline passes through *all* of them. Fully deterministic — the same dots
-   always give the same concave silhouette. (`convex_hull(points)` is the outer-wrapper
-   step on its own; `dig_ratio` stops the snap early to stay near-convex.)
-3. **`fill_polygon_alpha(img, polygon)`** — fill that outline into alpha (opaque inside,
-   transparent outside) = **the cutout**. No interior holes.
-4. **`defringe`** — optional final pass to melt any residual matte rim.
-
-Rough seeds in, tight matte out — the model places dots, looks at the cut, and nudges.
+Then `defringe` melts any residual matte rim. Rough seeds in, tight matte out — the model
+seeds, looks at the cut, and nudges. The edit screen exposes the same flow as toolbox
+buttons (Dot → Connect → Cut out).
 
 **Workspace / board controls:** `undo`, `redo` (per-image, two-level — see below),
 `status`, `collapse`, `export`, `move` (place an asset on the canvas), `list_workspaces`.
