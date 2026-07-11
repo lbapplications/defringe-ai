@@ -145,6 +145,40 @@ def test_scratch_store(opened):
     ws.scratch_clear("k")               # clearing a missing key is fine
 
 
+def _ov(shape=(20, 20)):
+    ov = np.zeros((*shape, 4), np.uint8)
+    ov[5:15, 5:15] = (0, 255, 0, 255)
+    return ov
+
+
+def test_overlay_chain_push_and_head(opened):
+    home, name = opened
+    ws = Workspace.resolve(name, home)
+    assert ws.overlay_head() == -1                      # none before any push
+    assert ws.overlay_path() is None
+
+    assert ws.push_overlay(_ov(), "edge → mask") == 0    # first version
+    assert ws.push_overlay(_ov(), "simplify_contour") == 1
+    assert ws.overlay_head() == 1
+
+    import os
+    assert os.path.exists(ws.overlay_path())            # current version file exists
+    assert ws.overlay_path(0).endswith("0000-edge → mask.png")
+
+
+def test_overlay_head_clamps_and_reads_versions(opened):
+    home, name = opened
+    ws = Workspace.resolve(name, home)
+    ws.push_overlay(_ov(), "a")
+    ws.push_overlay(_ov(), "b")
+    ws.set_overlay_head(999)                            # clamped to last
+    assert ws.overlay_head() == 1
+    ws.set_overlay_head(0)                              # revert to first version
+    assert ws.overlay_head() == 0 and ws.overlay_path().endswith("0000-a.png")
+    ws.set_overlay_head(-5)                             # clamped to -1 = no overlay
+    assert ws.overlay_head() == -1 and ws.overlay_path() is None
+
+
 def test_export(opened, tmp_path):
     home, name = opened
     dest = str(tmp_path / "out" / "final.png")

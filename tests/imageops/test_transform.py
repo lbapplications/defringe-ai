@@ -88,6 +88,120 @@ def test_edge_detect_fires_on_the_square(rgba):
     assert (edges[..., 0] == 255).any()
 
 
+def test_close_gaps_bridges_a_broken_edge(rgba):
+    # two thick white blocks with a 2px gap between them → closing seals the gap shut
+    m = np.zeros_like(rgba)
+    m[..., 3] = 255
+    m[5:15, 3:10, :3] = 255          # left block
+    m[5:15, 12:18, :3] = 255         # right block
+    assert m[10, 10, 0] == 0 and m[10, 11, 0] == 0        # 2px gap is dark before
+    closed = Transform.close_gaps(m, radius=2)
+    assert closed.shape == rgba.shape
+    assert (closed[..., 3] == 255).all()
+    assert closed[10, 10, 0] == 255 and closed[10, 11, 0] == 255   # gap bridged shut
+    # closing preserves bulk: pixels far from any mark stay black
+    assert closed[0, 0, 0] == 0
+
+
+def test_close_gaps_leaves_isolated_speck(rgba):
+    # closing connects; it does NOT remove a lone speck (that's opening) — documented behaviour
+    m = np.zeros_like(rgba)
+    m[..., 3] = 255
+    m[5, 5, :3] = 255                # a single isolated white pixel
+    closed = Transform.close_gaps(m, radius=1)
+    assert closed[5, 5, 0] == 255    # still there
+
+
+def _subject_scene(seed=1):
+    """80x80: noisy blue background with a distinct red subject block at [30:50, 30:50]."""
+    rng = np.random.default_rng(seed)
+    a = np.zeros((80, 80, 4), np.uint8)
+    a[..., 3] = 255
+    a[..., 2] = rng.integers(180, 220, (80, 80))            # blue ground
+    a[30:50, 30:50, 0] = rng.integers(180, 220, (20, 20))   # red subject
+    a[30:50, 30:50, 2] = rng.integers(0, 40, (20, 20))
+    return a
+
+
+def test_segment_confines_to_rect_and_finds_subject():
+    a = _subject_scene()
+    out = Transform.segment(a, [26, 26, 28, 28], iterations=3)
+    assert out[0, 0, 3] == 0                    # outside the seed rect → definite background
+    assert out[40, 40, 3] == 255                # the subject block is segmented as foreground
+    assert (out[..., :3] == a[..., :3]).all()   # RGB preserved, only alpha set
+
+
+def test_segment_keep_zero_skips_component_filter():
+    a = _subject_scene()
+    out = Transform.segment(a, [26, 26, 28, 28], iterations=3, keep=0)
+    assert (out[..., 3] > 0).any()              # still segments; just no keep-largest pass
+
+
+def test_segment_clamps_out_of_bounds_rect():
+    a = _subject_scene()
+    out = Transform.segment(a, [-10, -10, 999, 999], iterations=1)   # clamped to the frame
+    assert out.shape == a.shape
+
+
+def test_keep_largest_drops_noise():
+    m = np.zeros((40, 40, 4), np.uint8)
+    m[10:30, 10:30, :] = 255         # big subject (alpha + rgb)
+    m[2, 2, :] = 255                 # a speck
+    m[36, 36, :] = 255               # another speck
+    out = Transform.keep_largest(m, keep=1)
+    assert out[20, 20, 3] == 255     # subject kept
+    assert out[2, 2, 3] == 0 and out[36, 36, 3] == 0    # specks cleared to transparent
+    assert out[20, 20, 0] == 255     # RGB untouched
+
+
+def test_keep_largest_min_area_retains_above_threshold():
+    m = np.zeros((40, 40, 4), np.uint8)
+    m[10:30, 10:30, 3] = 255         # big (400 px)
+    m[2:5, 2:5, 3] = 255             # medium (9 px)
+    m[36, 36, 3] = 255               # tiny (1 px)
+    out = Transform.keep_largest(m, keep=1, min_area=5)
+    assert out[20, 20, 3] == 255 and out[3, 3, 3] == 255   # big + the ≥5px medium survive
+    assert out[36, 36, 3] == 0                              # the 1px speck is dropped
+
+
+def _components(m):
+    import cv2
+    return cv2.connectedComponents((m[..., 0] > 0).astype(np.uint8), connectivity=8)[0] - 1
+
+
+def test_bridge_gaps_links_nearest_fragments():
+    # two separated blobs → nearest-neighbour linking fuses them into ONE component
+    m = np.zeros((40, 40, 4), np.uint8)
+    m[..., 3] = 255
+    m[6:10, 5:9, :3] = 255            # blob A
+    m[6:10, 16:20, :3] = 255         # blob B (≈8px gap)
+    assert _components(m) == 2
+    br = Transform.bridge_gaps(m, max_link=20)
+    assert _components(br) == 1       # a 1px bridge now joins A—B
+    assert (br[..., 3] == 255).all()
+
+
+def test_bridge_gaps_leaves_far_speck_orphaned():
+    # a speck beyond max_link from everything gets no bridge → stays its own component
+    m = np.zeros((60, 60, 4), np.uint8)
+    m[..., 3] = 255
+    m[6:10, 5:9, :3] = 255            # blob A
+    m[6:10, 14:18, :3] = 255         # blob B (near A)
+    m[55, 55, :3] = 255              # a lone speck, >30px from A/B
+    assert _components(m) == 3
+    br = Transform.bridge_gaps(m, max_link=15)
+    assert _components(br) == 2       # A—B joined; the far speck remains isolated
+
+
+def test_bridge_gaps_single_fragment_is_noop():
+    m = np.zeros((20, 20, 4), np.uint8)
+    m[..., 3] = 255
+    m[5:9, 5:9, :3] = 255            # one blob → nothing to link
+    br = Transform.bridge_gaps(m)
+    assert _components(br) == 1
+    assert np.array_equal(br[..., 0], m[..., 0])
+
+
 def test_matrix_sweep_keys_black_out_and_glows(rgba):
     edges = Transform.edge_detect(rgba, lo=50, hi=150)
     ov = Transform.matrix_sweep(edges, color="#35ff7d", bold=1, glow=2.0)

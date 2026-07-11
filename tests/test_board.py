@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+import numpy as np
 import pytest
 
 from defringe_ai import imageops as ops
@@ -131,18 +132,51 @@ def test_goto_and_reset_history(board):
     assert st["can_undo"] is False
 
 
-def test_set_edge_records_and_undoes(board):
+def _overlay(shape=(20, 20)):
+    """A tiny transparency-keyed overlay to push as a layer version."""
+    ov = np.zeros((*shape, 4), np.uint8)
+    ov[5:15, 5:15] = (255, 0, 0, 255)
+    return ov
+
+
+def test_push_overlay_versions_record_and_undo(board):
     b, name = board
     b.sync()
-    b.set_edge(name, True)                                 # record=True → one timeline action
-    assert b.sync()["assets"][name]["mask"]["edge"] is True
-    b.undo(name)
-    assert b.sync()["assets"][name]["mask"]["edge"] is False
-    # a preview (record=False) flips the flag but adds no history
+    ws = Workspace(os.path.join(b.home, name))
+
+    b.push_overlay(name, _overlay(), "edge → mask")        # version 0, one timeline action
+    a = b.sync()["assets"][name]
+    assert a["mask"]["edge"] is True and a["overlay_head"] == 0
+    assert ws.overlay_head() == 0
+
+    b.push_overlay(name, _overlay(), "simplify_contour")   # version 1, a second action
+    assert b.sync()["assets"][name]["overlay_head"] == 1
+    assert ws.overlay_head() == 1
+
+    b.undo(name)                                           # back to version 0's overlay
+    assert b.sync()["assets"][name]["overlay_head"] == 0
+    assert ws.overlay_head() == 0
+
+    b.undo(name)                                           # back to open: no overlay
+    a = b.sync()["assets"][name]
+    assert a["mask"]["edge"] is False and a["overlay_head"] == -1
+    assert ws.overlay_head() == -1
+
+
+def test_push_overlay_preview_then_record(board):
+    b, name = board
+    b.sync()
     before = json.dumps(b.sync()["assets"][name].get("history"))
-    b.set_edge(name, True, record=False)
+    b.push_overlay(name, _overlay(), "edge → mask", record=False)   # preview → no history
     after = json.dumps(b.sync()["assets"][name].get("history"))
-    assert before == after and b.sync()["assets"][name]["mask"]["edge"] is True
+    assert before == after
+    assert b.sync()["assets"][name]["mask"]["edge"] is True
+    b.record_overlay_step(name, "edge → mask")             # settle → one action
+    assert json.dumps(b.sync()["assets"][name].get("history")) != after
+    # recording again with an unchanged overlay HEAD is a no-op
+    stable = json.dumps(b.sync()["assets"][name].get("history"))
+    b.record_overlay_step(name, "edge → mask")
+    assert json.dumps(b.sync()["assets"][name].get("history")) == stable
 
 
 def test_mutations_on_unknown_asset_are_safe_noops(board):
@@ -156,7 +190,8 @@ def test_mutations_on_unknown_asset_are_safe_noops(board):
         lambda: b.add_dot("ghost", 1, 1),
         lambda: b.clear_dots("ghost"),
         lambda: b.set_outline("ghost", [[0, 0], [1, 1], [2, 2]]),
-        lambda: b.set_edge("ghost", True),
+        lambda: b.push_overlay("ghost", _overlay(), "edge → mask"),
+        lambda: b.record_overlay_step("ghost", "edge → mask"),
         lambda: b.undo("ghost"),
         lambda: b.redo("ghost"),
         lambda: b.goto("ghost", 0),

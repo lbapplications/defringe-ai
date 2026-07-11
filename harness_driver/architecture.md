@@ -16,7 +16,8 @@ frontend/     the edit screen's UI: a Vite + React + Konva app (see frontend.md)
    │                 Konva-style — not a growing counter), selection, the invisible
    │                 MASK layer (dots/outline/lock), and per-image undo (via history.py)
    ├── workspace.py  ONE asset's PIXEL edit history (open/apply/undo/collapse/export) +
-   │                 the edit SESSION gate (begin_edit/cancel_edit/commit_edit + backup)
+   │                 the mask-OVERLAY layer chain (push_overlay/overlay_head, sibling to
+   │                 the pixel chain) + the edit SESSION gate (begin/cancel/commit + backup)
    ├── history.py    the per-image undo ENGINE — generic, knows nothing about pixels/dots
    └── imageops/     the TOOLS as orthogonal class sets (see tools.md)
 ```

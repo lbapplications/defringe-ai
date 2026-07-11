@@ -23,6 +23,53 @@ def _dedupe(points) -> np.ndarray:
     return arr[np.sort(idx)]
 
 
+def _rdp(points: np.ndarray, epsilon: float) -> np.ndarray:
+    """Ramer–Douglas–Peucker polyline simplification, vectorised per split.
+
+    Keeps the two endpoints, then recursively keeps the interior point farthest from the
+    chord between the current endpoints while that distance exceeds ``epsilon``. The
+    per-split perpendicular distance is one broadcast ``np.cross`` over every interior
+    point — no per-point Python loop; the recursion (an explicit stack) is only O(log n)
+    deep in the balanced case.
+
+    Args:
+        points: ``(N, 2)`` ordered polyline/contour vertices.
+        epsilon: Max perpendicular deviation (pixels) a dropped point may have from the
+            kept chord. Larger ``epsilon`` → coarser polygon.
+
+    Returns:
+        The kept vertices as an ``(M, 2)`` int64 array, in the input's order. Inputs of
+        fewer than 3 points are returned unchanged.
+    """
+    pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    n = len(pts)
+    if n < 3:
+        return pts.astype(np.int64)
+    keep = np.zeros(n, dtype=bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        a, b = pts[i], pts[j]
+        ab = b - a
+        seg = pts[i + 1: j]                                  # interior points of this span
+        norm = float(np.hypot(*ab))
+        ap = seg - a
+        if norm == 0:                                        # degenerate chord → point distance
+            dist = np.hypot(ap[:, 0], ap[:, 1])
+        else:                                                # 2D cross → perpendicular distance
+            dist = np.abs(ab[0] * ap[:, 1] - ab[1] * ap[:, 0]) / norm
+        k = int(np.argmax(dist))
+        if dist[k] > epsilon:
+            idx = i + 1 + k
+            keep[idx] = True
+            stack.append((i, idx))
+            stack.append((idx, j))
+    return pts[keep].astype(np.int64)
+
+
 def _seg_dist_matrix(pts: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Distance from every point to every segment, vectorised.
 
@@ -64,6 +111,105 @@ class Geometry:
             return pts.tolist()
         hull = cv2.convexHull(pts.astype(np.int32).reshape(-1, 1, 2), returnPoints=True)
         return [[int(p[0][0]), int(p[0][1])] for p in hull]
+
+    @staticmethod
+    def label_shapes(img: RGBA) -> list[list[int]]:
+        """Connected-components analysis of the foreground — one row per distinct shape.
+
+        Labels every 8-connected region of ``alpha > 0`` (the matte's shapes, or the marks of a
+        transparent-keyed overlay) and reports its geometry. This is the ImageMagick
+        ``-connected-components`` primitive: it turns a pile of pixels into a list of addressable
+        shapes you can rank, filter, crop, or cut. Rows are sorted **largest area first**, so
+        ``[0]`` is the subject and the tail is speckle.
+
+        Args:
+            img: Source ``(H, W, 4)`` RGBA whose alpha marks the foreground.
+
+        Returns:
+            One ``[area, x, y, w, h, cx, cy]`` per component — pixel count, bounding box
+            (top-left ``x,y`` + ``w,h``), and integer centroid — largest first. ``[]`` if the
+            foreground is empty.
+        """
+        binary = (img[..., 3] > 0).astype(np.uint8)
+        n, _labels, stats, cent = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        rows = []
+        for c in range(1, n):                               # 0 is the background
+            rows.append([
+                int(stats[c, cv2.CC_STAT_AREA]),
+                int(stats[c, cv2.CC_STAT_LEFT]), int(stats[c, cv2.CC_STAT_TOP]),
+                int(stats[c, cv2.CC_STAT_WIDTH]), int(stats[c, cv2.CC_STAT_HEIGHT]),
+                int(round(cent[c][0])), int(round(cent[c][1])),
+            ])
+        rows.sort(key=lambda r: -r[0])
+        return rows
+
+    @staticmethod
+    def find_contours(img: RGBA) -> list[list[int]]:
+        """Trace the subject's raw outer boundary from a matte — **every** contour vertex,
+        unsimplified. The dense pixel-chain that :meth:`simplify_contour` then thins.
+
+        Reads ``alpha > 0`` as the shape, finds its outer contours (OpenCV ``findContours``
+        implements Suzuki–Abe border following — Suzuki & Abe 1985, *Topological structural
+        analysis of digitized binary images by border following*), and returns the largest one —
+        the subject — as the full ordered boundary walk, one vertex per boundary step
+        (``CHAIN_APPROX_NONE``, so nothing is collapsed). This is the middle stage of the
+        pipeline: ``edge map → **find contours** → simplify``. On its own the chain hugs every
+        pixel jitter in the matte; Douglas–Peucker is what turns it into a sparse polygon.
+
+        Feed it a **matte** (e.g. from :meth:`Transform.key_background`): the alpha must already
+        mark the shape. A fully-opaque image yields the frame rectangle.
+
+        Args:
+            img: Source ``(H, W, 4)`` RGBA whose alpha marks the subject.
+
+        Returns:
+            The largest outer boundary as an ordered ``[x, y]`` walk (dense), or ``[]`` if no
+            pixel is opaque.
+        """
+        binary = (img[..., 3] > 0).astype(np.uint8)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return []
+        biggest = max(contours, key=cv2.contourArea)
+        return [[int(x), int(y)] for x, y in biggest.reshape(-1, 2)]
+
+    @staticmethod
+    def simplify_contour(img: RGBA, epsilon: float = 2.0) -> list[list[int]]:
+        """Trace a matte's alpha silhouette and simplify it into a few outline vertices.
+
+        The unseeded counterpart to :meth:`hull_snap`: instead of digging a boundary through
+        hand-placed dots, it reads the boundary straight from the pixels. Takes the dense
+        boundary walk from :meth:`find_contours` (the largest subject contour) and simplifies
+        that pixel-chain into a sparse polygon with the Douglas–Peucker algorithm — so it hugs
+        every concavity the convex hull flies over, with no seeding. The last stage of the
+        pipeline: ``edge map → find contours → **simplify**``.
+
+        Feed it a **matte** (e.g. straight out of :meth:`Transform.key_background`): the alpha
+        channel must already mark the shape. A fully-opaque image yields the frame rectangle.
+
+        Args:
+            img: Source ``(H, W, 4)`` RGBA whose alpha marks the subject.
+            epsilon: Douglas–Peucker tolerance in pixels — the max distance a dropped vertex
+                may sit from the kept outline. Larger ``epsilon`` → fewer, coarser vertices.
+
+        Returns:
+            The simplified outer boundary as an ordered list of ``[x, y]`` vertices (ready
+            for :meth:`fill_polygon_alpha`), or ``[]`` if no pixel is opaque.
+        """
+        pts = Geometry.find_contours(img)
+        if len(pts) < 3:
+            return []
+        arr = np.asarray(pts, dtype=np.int64)
+        # The found contour is a CLOSED ring; _rdp simplifies an OPEN polyline (it force-keeps
+        # both ends). Roll the start onto a true extreme vertex (top-left-most) and close the
+        # ring so the join is simplified like any other span — otherwise an arbitrary mid-edge
+        # start pixel survives as a spurious vertex.
+        start = int(np.argmin(arr[:, 0] + arr[:, 1]))
+        arr = np.roll(arr, -start, axis=0)
+        kept = _rdp(np.vstack([arr, arr[:1]]), epsilon)
+        if len(kept) > 1 and np.array_equal(kept[0], kept[-1]):
+            kept = kept[:-1]                                 # drop the duplicated closing vertex
+        return [[int(x), int(y)] for x, y in kept]
 
     @staticmethod
     def hull_snap(points, dig_ratio: float = 0.0) -> list[list[int]]:

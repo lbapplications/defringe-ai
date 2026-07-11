@@ -43,7 +43,7 @@ TAXONOMY = {
     "transform": ["key_background", "trim_alpha", "crop", "defringe", "upscale", "silhouette_mask"],
     "shape":     ["draw_shape", "draw_line"],           # draw primitives onto the image
     "annotate":  ["mark"],                               # drop debug/seed dots
-    "isolate":   ["seed", "connect", "isolate", "clear_seeds"],  # dots -> outline -> matte
+    "isolate":   ["seed", "connect", "outline", "cutout", "isolate", "clear_seeds"],  # dots|pixels|segment -> matte
     "derive":    ["edge_detect", "edge_detect_tune"],    # extract a SIGNAL as a mask overlay — image untouched, undoable
     "arrange":   ["move", "select"],                     # canvas layout — not gated
     "workspace": ["open_asset", "list_workspaces", "list_shapes", "taxonomy", "status", "undo", "redo", "collapse", "export"],
@@ -247,12 +247,12 @@ def _edge_overlay(img, lo: int, hi: int):
 
 def _edge_detect_apply(name: str, lo: int, hi: int) -> dict:
     """Compute the edge map from the asset's current image and lay it down as a MASK
-    OVERLAY (thin negative lines, transparency-keyed via matrix_sweep). The image is
-    untouched — the original stays HEAD; the overlay PNG lives at ``<root>/mask_edge.png``
-    and the board flags it so the edit screen shows it under the mask view. Undo clears it."""
+    OVERLAY VERSION (thin negative lines, transparency-keyed via matrix_sweep). The image is
+    untouched — the original stays HEAD; the overlay is snapshotted into the asset's overlay
+    chain and recorded as one timeline step, so the edit screen shows it under the mask view
+    and undo restores the exact prior overlay (or none)."""
     ws = Workspace.resolve(name, HOME)
-    ops.Io.save(_edge_overlay(ws.current_array(), lo, hi), os.path.join(ws.root, "mask_edge.png"))
-    Board(HOME).set_edge(name, True)
+    Board(HOME).push_overlay(name, _edge_overlay(ws.current_array(), lo, hi), "edge → mask")
     return ws.status()
 
 
@@ -267,12 +267,11 @@ _TUNE_MAX_NOS = 2
 
 
 def _tune_render(name: str, ws: Workspace, cand: int) -> dict:
-    """Render the candidate edge map as the asset's mask overlay — the original image is
-    untouched and stays HEAD. Overwrites the previous preview (never stacks); the flag is
-    set WITHOUT recording, since a search's probes shouldn't spam the undo timeline."""
-    ops.Io.save(_edge_overlay(ws.current_array(), cand // 2, cand),
-                os.path.join(ws.root, "mask_edge.png"))
-    Board(HOME).set_edge(name, True, record=False)
+    """Render the candidate edge map as a mask-overlay preview — the original image is
+    untouched and stays HEAD. Pushes an overlay version WITHOUT recording a timeline step,
+    since a search's probes shouldn't spam the undo timeline until it converges."""
+    Board(HOME).push_overlay(
+        name, _edge_overlay(ws.current_array(), cand // 2, cand), "edge → mask", record=False)
     return ws.status()
 
 
@@ -299,7 +298,7 @@ def _tune_commit(ws: Workspace, name: str, state: dict) -> EdgeDetectTuneResult:
     undo step (so the whole search collapses to one 'edge → mask' action), and clear the
     search state."""
     st = _tune_render(name, ws, state["cand"])
-    Board(HOME).set_edge(name, True, record=True)
+    Board(HOME).record_overlay_step(name, "edge → mask")
     ws.scratch_clear(_TUNE_KEY)
     return _tune_result(name, st, state, done=True)
 
@@ -390,6 +389,25 @@ def connect(workspace: str = "") -> MaskState:
 
 
 @mcp.tool()
+def outline(epsilon: float = 2.0, workspace: str = "") -> MaskState:
+    """[isolate] Trace the subject's boundary straight from the pixels — the unseeded
+    counterpart to `connect`. Finds the outer contour of the matte (alpha > 0), takes the
+    largest, and simplifies it into a sparse polygon (Douglas–Peucker), so it hugs every
+    concavity a seeded convex boundary flies over — with no dots placed.
+
+    Needs a matte: the alpha must already mark the subject (run `key_background` or another
+    isolate-prep first). `epsilon` is the simplify tolerance in pixels — larger drops more
+    vertices for a coarser outline. Lands in `mask.outline`; run `isolate` next to cut it."""
+    name = _name(workspace)
+    img = Workspace.resolve(name, HOME).current_array()
+    poly = ops.Geometry.simplify_contour(img, epsilon)
+    if len(poly) < 3:
+        raise ValueError("no traceable outline — the alpha marks no subject; key/matte first")
+    Board(HOME).set_outline(name, poly, label="outline")
+    return _mask_state(name)
+
+
+@mcp.tool()
 def isolate(workspace: str = "") -> IsolateResult:
     """[isolate] Cut out the subject: fill the connected boundary into alpha (transparent
     background). Self-contained — opens and commits its own edit. Run `connect` first."""
@@ -403,6 +421,47 @@ def isolate(workspace: str = "") -> IsolateResult:
     st = ws.apply("isolate", ops.Geometry.fill_polygon_alpha, {"polygon": outline})
     ws.commit_edit()
     Board(HOME).record_pixel_edit(name, "isolate")   # image-level undo step
+    return IsolateResult(workspace=name, head=st["head"], steps=st["steps"],
+                         current=st["current"], width=st["width"], height=st["height"],
+                         chain=st["chain"])
+
+
+def _seed_rect(rect, name: str, w: int, h: int) -> list[int]:
+    """Resolve GrabCut's seed box: an explicit [x,y,w,h], else the mask's dots/outline bounding
+    box, else the whole frame inset by ~6% so there's a background border to learn from."""
+    if rect and len(rect) == 4:
+        return [int(v) for v in rect]
+    m = Board(HOME).sync().get("assets", {}).get(name, {}).get("mask", {})
+    pts = (m.get("outline") or []) + (m.get("dots") or [])
+    if len(pts) >= 2:
+        xs = [int(p[0]) for p in pts]
+        ys = [int(p[1]) for p in pts]
+        return [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+    mx, my = int(w * 0.06), int(h * 0.06)             # inset frame → a bg border to seed from
+    return [mx, my, w - 2 * mx, h - 2 * my]
+
+
+@mcp.tool()
+def cutout(rect: list[int] = [], iterations: int = 5, workspace: str = "") -> IsolateResult:
+    """[isolate] Auto-cut the subject from its background by iterated graph-cut segmentation
+    (GrabCut). Seed with a rough box around the subject; it fits foreground/background colour
+    models and cuts on colour **and** connectivity, so it separates the subject from
+    same-coloured background a flat key can't. Keeps the largest segmented region (drops stray
+    specks). Self-contained — opens and commits its own edit.
+
+    Args:
+        rect: Seed box `[x, y, w, h]` around the subject in image pixels. Empty → use the mask's
+            dots/outline bounding box if seeded, else the whole frame inset by a margin.
+        iterations: GrabCut refinement passes (1 usually suffices for a high-contrast subject).
+    """
+    name = _name(workspace)
+    ws = Workspace.resolve(name, HOME)
+    h, w = ws.current_array().shape[:2]
+    box = _seed_rect(rect, name, w, h)
+    ws.begin_edit("cutout (segment)")
+    st = ws.apply("cutout", ops.Transform.segment, {"rect": box, "iterations": int(iterations)})
+    ws.commit_edit()
+    Board(HOME).record_pixel_edit(name, "cutout")     # image-level undo step
     return IsolateResult(workspace=name, head=st["head"], steps=st["steps"],
                          current=st["current"], width=st["width"], height=st["height"],
                          chain=st["chain"])

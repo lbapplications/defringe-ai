@@ -106,16 +106,72 @@ def test_build_state_and_sig_direct(loaded_home):
 def test_mask_edge_route_and_state(client):
     c, home, name = client
     assert c.get(f"/mask/{name}").status_code == 404                    # no overlay yet
-    # lay down an edge overlay and confirm it's served + reflected in the pushed state
+    # push an overlay version and confirm it's served + reflected in the pushed state
     from defringe_ai import imageops as ops
     img = Workspace.resolve(name, home).current_array()
-    ops.Io.save(ops.Transform.matrix_sweep(ops.Transform.edge_detect(img)),
-                os.path.join(home, name, "mask_edge.png"))
-    Board(home).set_edge(name, True)
+    ov = ops.Transform.matrix_sweep(ops.Transform.edge_detect(img))
+    Board(home).push_overlay(name, ov, "edge → mask")
     assert c.get(f"/mask/{name}").status_code == 200
     assert c.get("/mask/ghost").status_code == 404
     st = next(a for a in webapp.build_state(home) if a["name"] == name)
     assert st["edge"] is True and st["edge_rev"] != ""
+    rev0 = st["edge_rev"]
+    # a second version bumps edge_rev (busts the browser cache); undo restores the first
+    Board(home).push_overlay(name, ov, "simplify_contour")
+    st = next(a for a in webapp.build_state(home) if a["name"] == name)
+    assert st["edge_rev"] != rev0
+    Board(home).undo(name)
+    st = next(a for a in webapp.build_state(home) if a["name"] == name)
+    assert st["edge_rev"] == rev0
+
+
+def test_derive_edge_close_bridge_buttons(client):
+    import numpy as np
+    from defringe_ai import imageops as ops
+
+    c, home, name = client
+    # Edge button with slider params: Canny(lo,hi) from the image → an overlay appears
+    assert c.post("/api/derive", json={"name": name, "op": "edge", "lo": 40, "hi": 120}).json()["ok"]
+    st = next(a for a in webapp.build_state(home) if a["name"] == name)
+    assert st["edge"] is True
+    # the overlay is keyed white-on-TRANSPARENT (black dropped out), not opaque black
+    ov = ops.Io.load(Workspace(os.path.join(home, name)).overlay_path())
+    assert ov[..., 3].min() == 0 and ov[..., 3].max() == 255
+    # Close (radius) and Bridge (max_link) transform the current overlay
+    assert c.post("/api/derive", json={"name": name, "op": "close", "radius": 3}).json()["ok"]
+    assert c.post("/api/derive", json={"name": name, "op": "bridge", "max_link": 60}).json()["ok"]
+    labels = [x["label"] for x in Board(home).sync()["assets"][name]["history"]["actions"]]
+    assert "edge → mask" in labels and "close" in labels and "bridge" in labels
+
+
+def test_derive_keep_largest_drops_noise(client):
+    import numpy as np
+    from defringe_ai import imageops as ops
+
+    c, home, name = client
+    # seed an overlay with a big mark + a speck via the derive path, then keep the largest
+    c.post("/api/derive", json={"name": name, "op": "edge", "lo": 40, "hi": 120})
+    before = ops.Io.load(Workspace(os.path.join(home, name)).overlay_path())
+    n_before = int((before[..., 3] > 0).any())
+    assert c.post("/api/derive", json={"name": name, "op": "keep", "keep": 1}).json()["ok"]
+    after = ops.Io.load(Workspace(os.path.join(home, name)).overlay_path())
+    # keep-largest never adds foreground; kept ⊆ original marks
+    assert (after[..., 3] > 0).sum() <= (before[..., 3] > 0).sum()
+    labels = [x["label"] for x in Board(home).sync()["assets"][name]["history"]["actions"]]
+    assert "keep largest" in labels
+
+
+def test_derive_close_before_edge_errs(client):
+    c, home, name = client
+    r = c.post("/api/derive", json={"name": name, "op": "close"}).json()
+    assert r["ok"] is False and "Edge first" in r["error"]
+
+
+def test_derive_unknown_op_and_bad_asset(client):
+    c, home, name = client
+    c.post("/api/derive", json={"name": name, "op": "edge"})
+    assert c.post("/api/derive", json={"name": name, "op": "zzz"}).json()["ok"] is False
+    assert c.post("/api/derive", json={"name": "ghost", "op": "edge"}).json()["ok"] is False
 
 
 def test_web_package_reexport():

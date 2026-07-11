@@ -47,10 +47,12 @@ name to a library we might swap.
 | **edit session** / **the gate** | the `edit → … → commit/cancel` transaction that gates pixel mutations. Not "transaction mode". |
 | **mask** | the invisible per-image dots+outline layer that rides with the asset. Not "selection", "layer". |
 | **seed** (v.) | drop rough boundary dots. **connect** = join them into an outline. Not "trace". |
+| **outline** (v.) | trace the boundary straight from the pixels (simplify a matte's contour) — the *unseeded* `connect`. Fills the same `mask.outline` slot; then `isolate`. |
 | **isolate** / **cutout** | fill the outline into alpha = the matte. Not "extract", "clip". |
 | **signal** / **derive** | a read-only extraction (e.g. an edge map) applied in place. Not "filter". |
 | **defringe** | erode + burn the matte rim. **fringe/matte rim** = the halo it removes. |
-| **memento** | one entry in the mask's undo timeline; carries `pixel_head` to bind the two chains. |
+| **memento** | one entry in the mask's undo timeline; carries `pixel_head` **and** `overlay_head` to bind the pixel + overlay chains. |
+| **overlay** / **layer chain** | a versioned mask-overlay raster (edge/hull/simplify) snapshotted per step; `overlay_head` points at the current version. Not "the mask" (that's the dots+outline), not a single file. |
 
 Add a term here the moment a new concept earns a name — before it picks up three synonyms
 across the code.

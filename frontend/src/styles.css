@@ -42,6 +42,10 @@ header .hint { color: #666; font-size: 11px; margin-left: auto; }
 
 .sel-name { font-size: 12px; color: #9ad; word-break: break-all; }
 .muted { font-size: 11px; color: #777; }
+.slider-row { display: flex; flex-direction: column; gap: 2px; }
+.slider-label { display: flex; justify-content: space-between; font-size: 11px; color: #9a9aa2; }
+.slider-label b { color: #cfefff; font-variant-numeric: tabular-nums; }
+.slider-row input[type="range"] { width: 100%; accent-color: #6cf; cursor: pointer; }
 .history-select {
   width: 100%; padding: 6px 8px; font: inherit; color: #ddd; cursor: pointer;
   background: #1b1b20; border: 1px solid #2c2c33; border-radius: 6px;

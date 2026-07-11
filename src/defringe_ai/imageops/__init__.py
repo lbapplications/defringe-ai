@@ -8,7 +8,9 @@
                                                                   matrix_sweep
     Shape      draw primitives + the anchor/box model             draw_shape, draw_line
     Annotate   seed dots burned into the pixels                   mark
-    Geometry   dots -> outline -> matte (the seeded isolation)    convex_hull, hull_snap,
+    Geometry   dots -> outline -> matte (the seeded isolation)    convex_hull, label_shapes,
+                                                                  hull_snap, find_contours,
+                                                                  simplify_contour,
                                                                   fill_polygon_alpha
 
 Each class is a stateless namespace of @staticmethods over RGBA (H,W,4) uint8 arrays. The

@@ -20,7 +20,7 @@ it one, and don't leave a headline capability reachable only from a web route.
 | `Transform` (`transform.py`) | matte extraction + pixel cleanup | `key_background`, `trim_alpha`, `crop`, `defringe`, `upscale`, `silhouette_mask`, `edge_detect` | same names (gated) |
 | `Shape` (`shape.py`) | draw primitives + anchor/box model | `resolve_box`, `draw_shape`, `draw_line` | `draw_shape`, `draw_line` (gated) |
 | `Annotate` (`annotate.py`) | seed dots burned into pixels | `mark` | `mark` (gated) |
-| `Geometry` (`geometry.py`) | dots → outline → matte (seeded isolation) | `convex_hull`, `hull_snap`, `fill_polygon_alpha` | `seed`, `connect`, `isolate`, `clear_seeds` |
+| `Geometry` (`geometry.py`) | dots → outline → matte (seeded isolation) | `convex_hull`, `hull_snap`, `simplify_contour`, `fill_polygon_alpha` | `seed`, `connect`, `isolate`, `clear_seeds` |
 
 Each method is a **stateless `@staticmethod`** on RGBA `(H,W,4)` uint8 (Geometry also
 takes/returns point lists). Tool classes import `utils` **only**, never each other.

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { type Asset, post } from "./state";
 
 type Props = {
@@ -25,6 +26,13 @@ export default function Toolbox({
   const a = assets.find((x) => x.selected) || null;
   const dots = a ? a.dots.length : 0;
   const act = (url: string) => a && post(url, { name: a.name });
+  const derive = (op: string, params: object) => a && post("/api/derive", { name: a.name, op, ...params });
+  // Derive-tool slider params — adjust, then click the op to apply with these values.
+  const [lo, setLo] = useState(100);
+  const [hi, setHi] = useState(200);
+  const [radius, setRadius] = useState(2);
+  const [maxLink, setMaxLink] = useState(100);
+  const [keep, setKeep] = useState(1);
   const timeline = a?.timeline || [];
   const headIdx = Math.max(0, timeline.findIndex((t) => t.startsWith("* ")));
 
@@ -93,6 +101,46 @@ export default function Toolbox({
           </button>
         </Group>
 
+        <Group label="Derive · edge map">
+          <Slider label="Canny lo" value={lo} min={0} max={255} set={setLo} />
+          <Slider label="Canny hi" value={hi} min={0} max={255} set={setHi} />
+          <button className="wide-btn" disabled={!a} onClick={() => derive("edge", { lo, hi })}>
+            ▚ Edge (Canny → mask)
+          </button>
+
+          <Slider label="Close radius" value={radius} min={1} max={12} set={setRadius} />
+          <Slider label="Bridge max-link" value={maxLink} min={5} max={200} set={setMaxLink} />
+          <div className="btn-row">
+            <button
+              className="tool-btn"
+              disabled={!a || !a.edge}
+              title="morphological closing: dilate → erode (bloats, seals small gaps)"
+              onClick={() => derive("close", { radius })}
+            >
+              ⬤ Close
+            </button>
+            <button
+              className="tool-btn"
+              disabled={!a || !a.edge}
+              title="graph nearest-neighbour link: thin 1px bridges, no bloat"
+              onClick={() => derive("bridge", { max_link: maxLink })}
+            >
+              ⤳ Bridge
+            </button>
+          </div>
+          <div className="muted">Close/Bridge transform the current overlay — run Edge first.</div>
+
+          <Slider label="Keep N shapes" value={keep} min={1} max={8} set={setKeep} />
+          <button
+            className="wide-btn"
+            disabled={!a || !a.edge}
+            title="connected-components filter: keep the N largest shapes, drop the rest (noise)"
+            onClick={() => derive("keep", { keep })}
+          >
+            ◇ Keep largest (drop noise)
+          </button>
+        </Group>
+
         <Group label="Mask">
           <div className="muted">{dots} dot{dots === 1 ? "" : "s"}</div>
           <button className="wide-btn" disabled={!a || dots < 3} onClick={() => act("/api/connect")}>
@@ -120,5 +168,29 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
       <div className="grp-label">{label}</div>
       {children}
     </div>
+  );
+}
+
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  set,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  set: (v: number) => void;
+}) {
+  return (
+    <label className="slider-row">
+      <span className="slider-label">
+        {label}
+        <b>{value}</b>
+      </span>
+      <input type="range" min={min} max={max} value={value} onChange={(e) => set(Number(e.target.value))} />
+    </label>
   );
 }

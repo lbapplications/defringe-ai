@@ -46,6 +46,9 @@ def _ensure_layers(a: dict) -> dict:
 #   pixel_head       the workspace edit-chain HEAD → makes undo work at the IMAGE level:
 #                    a committed transform (isolate, defringe, …) is captured here, so
 #                    reverting a step moves the actual pixels back, not just the mask.
+#   overlay_head     the workspace overlay-chain HEAD (-1 = none) → binds the LAYER chain
+#                    the same way: reverting a derive step (edge/hull/simplify) restores
+#                    that step's actual overlay pixels, not just the `edge` flag.
 # Position/scale and z-order/selection are deliberately NOT tracked — moves aren't history
 # we care to keep, so undo/goto never move an image, only revert its edits.
 def _snapshot(a: dict) -> dict:
@@ -53,6 +56,7 @@ def _snapshot(a: dict) -> dict:
         "mask": copy.deepcopy(a["mask"]),
         "locked": a["locked"],
         "pixel_head": int(a.get("pixel_head", 0)),
+        "overlay_head": int(a.get("overlay_head", -1)),
     }
 
 
@@ -61,6 +65,8 @@ def _restore(a: dict, snap: dict) -> None:
     a["locked"] = snap["locked"]
     if "pixel_head" in snap:
         a["pixel_head"] = int(snap["pixel_head"])
+    if "overlay_head" in snap:
+        a["overlay_head"] = int(snap["overlay_head"])
     _ensure_layers(a)
 
 
@@ -70,6 +76,14 @@ def _current_pixel_head(home: str, name: str) -> int:
         return Workspace(os.path.join(home, name)).head()
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return 0
+
+
+def _current_overlay_head(home: str, name: str) -> int:
+    """The live workspace overlay HEAD for an asset (-1 if it has none)."""
+    try:
+        return Workspace(os.path.join(home, name)).overlay_head()
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        return -1
 
 
 def _history(a: dict) -> History:
@@ -141,8 +155,9 @@ class Board:
                     b["order"].append(name)
         b["order"] = [n for n in b["order"] if n in names]
         b["assets"] = {n: v for n, v in b["assets"].items() if n in names}
-        for nm, a in b["assets"].items():               # backfill lock + mask + pixel head
+        for nm, a in b["assets"].items():               # backfill lock + mask + chain heads
             a["pixel_head"] = _current_pixel_head(self.home, nm)
+            a["overlay_head"] = _current_overlay_head(self.home, nm)
             _ensure_layers(a)
         if b["selected"] not in names:
             b["selected"] = b["order"][-1] if b["order"] else None
@@ -217,28 +232,51 @@ class Board:
             self._write(b)
         return b
 
-    def set_outline(self, name, outline) -> dict:
-        """Store a derived boundary polygon (list of [x, y], image space) on the mask."""
+    def set_outline(self, name, outline, label="connect") -> dict:
+        """Store a derived boundary polygon (list of [x, y], image space) on the mask.
+
+        `label` names the timeline step: "connect" when the polygon is snapped through seed
+        dots (`hull_snap`), "outline" when it's traced straight from the pixels
+        (`simplify_contour`) — both land in the same `mask.outline` slot `isolate` fills."""
         b = self.sync()
         if name in b["assets"]:
             a = b["assets"][name]
             _ensure_layers(a)["mask"]["outline"] = [[int(x), int(y)] for x, y in outline]
-            _commit(a, "connect")
+            _commit(a, label)
             self._write(b)
         return b
 
-    def set_edge(self, name, on=True, record=True) -> dict:
-        """Flag that the asset carries an edge-map mask overlay — the raster itself is
-        written by the caller to ``<home>/<name>/mask_edge.png``. Recorded on the timeline
-        like ``connect`` so it undoes as one step; pass ``record=False`` for live previews
-        (e.g. the tune search) that shouldn't spam the timeline until they commit."""
+    def push_overlay(self, name, img, label, record=True) -> dict:
+        """Lay down a mask-overlay VERSION and (by default) record it as one timeline step.
+
+        The raster is snapshotted into the asset's overlay chain (a real layer version), the
+        mask is flagged ``edge``, and the memento captures the new ``overlay_head`` — so undo/
+        goto restore this exact overlay's pixels, not merely the flag. Pass ``record=False``
+        for live previews (e.g. the tune search) that shouldn't commit a timeline step until
+        they finish; ``record_overlay_step`` then commits the settled version once."""
         b = self.sync()
         if name in b["assets"]:
             a = b["assets"][name]
-            _ensure_layers(a)["mask"]["edge"] = bool(on)
+            idx = Workspace(os.path.join(self.home, name)).push_overlay(img, label)
+            a["overlay_head"] = idx
+            _ensure_layers(a)["mask"]["edge"] = True
             if record:
-                _commit(a, "edge → mask" if on else "clear edge")
+                _commit(a, label)
             self._write(b)
+        return b
+
+    def record_overlay_step(self, name, label) -> dict:
+        """Commit the asset's CURRENT overlay version as one timeline step — the overlay
+        twin of ``record_pixel_edit``. No-op if the overlay HEAD hasn't moved since the last
+        committed action (so an unchanged/idempotent preview adds no history)."""
+        b = self.sync()
+        if name in b["assets"]:
+            a = b["assets"][name]
+            h = _history(a)
+            if h.state.get("overlay_head") != a.get("overlay_head"):
+                _ensure_layers(a)["mask"]["edge"] = True
+                _commit(a, label)
+                self._write(b)
         return b
 
     # --- per-image undo / redo (focus-aware, image-level) ------------------
@@ -251,6 +289,17 @@ class Board:
             return
         try:
             Workspace(os.path.join(self.home, name)).set_head(int(ph))
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            pass
+
+    def _apply_overlay_head(self, name, a) -> None:
+        """Point the asset's workspace overlay HEAD at the overlay_head just restored from a
+        memento, so reverting a derive step brings back that step's actual overlay pixels."""
+        oh = a.get("overlay_head")
+        if oh is None:
+            return
+        try:
+            Workspace(os.path.join(self.home, name)).set_overlay_head(int(oh))
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             pass
 
@@ -276,6 +325,7 @@ class Board:
             if h.undo():
                 _restore(a, h.state)
                 self._apply_pixel_head(name, a)
+                self._apply_overlay_head(name, a)
             a["history"] = h.to_dict()
             self._write(b)
         return b
@@ -288,6 +338,7 @@ class Board:
             if h.redo():
                 _restore(a, h.state)
                 self._apply_pixel_head(name, a)
+                self._apply_overlay_head(name, a)
             a["history"] = h.to_dict()
             self._write(b)
         return b
@@ -301,6 +352,7 @@ class Board:
             if h.goto(index):
                 _restore(a, h.state)
                 self._apply_pixel_head(name, a)
+                self._apply_overlay_head(name, a)
             a["history"] = h.to_dict()
             self._write(b)
         return b
@@ -316,7 +368,12 @@ class Board:
             m["dots"] = []
             m["outline"] = []
             m["edge"] = False
-            try:                                        # drop the overlay raster too
+            try:                                        # detach the overlay layer chain
+                Workspace(os.path.join(self.home, name)).set_overlay_head(-1)
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+                pass
+            a["overlay_head"] = -1
+            try:                                        # drop the legacy single-file overlay
                 os.remove(os.path.join(self.home, name, "mask_edge.png"))
             except OSError:
                 pass

@@ -24,6 +24,7 @@ import time
 # tab never happens again. No Vite / build step needed.
 BUILD = str(int(time.time()))
 
+import numpy as np
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -41,9 +42,17 @@ DIST = os.path.join(WEBDIR, "dist")  # the built Vite app (frontend/ → here); 
 # --- state (board arrangement + workspace edit heads) ----------------------
 
 def _edge_rev(home: str, name: str) -> str:
-    """Cache-buster for an asset's edge overlay: the PNG mtime, or '' if there's none.
-    Included in the pushed state + signature so a re-run (which rewrites the same file)
-    still reaches the browser and busts the `<img>` cache."""
+    """Cache-buster for an asset's mask overlay: the current version index + its PNG mtime,
+    or '' if there's none. Included in the pushed state + signature so switching overlay
+    versions (undo/redo across the layer chain) reaches the browser and busts the `<img>`
+    cache — even when two versions share a filename slot."""
+    try:
+        ws = Workspace(os.path.join(home, name))
+        path = ws.overlay_path()
+        if path and os.path.exists(path):
+            return f"{ws.overlay_head()}:{os.path.getmtime(path)}"
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        pass
     try:
         return str(os.path.getmtime(os.path.join(home, name, "mask_edge.png")))
     except OSError:
@@ -245,11 +254,71 @@ def build_app(home: str) -> Starlette:
         Board(home).set_outline(name, Geometry.hull_snap(dots))
         return JSONResponse({"ok": True, "n": len(dots)})
 
+    async def api_derive(request):
+        """Apply a derive op as a new mask-overlay version — the click-to-experiment path.
+        Params come from the toolbox sliders. `edge` runs Canny (lo/hi) on the current image;
+        `close` (radius) and `bridge` (max_link) transform the CURRENT overlay. Every result is
+        keyed to white-on-TRANSPARENT so the marks float over the image instead of hiding it
+        behind black, and pushed as one undoable timeline step."""
+        from ..imageops import Io, Transform
+
+        body = await request.json()
+        name = os.path.basename(str(body.get("name", "")))
+        op = str(body.get("op", ""))
+        if name not in Board(home).sync().get("assets", {}):
+            return JSONResponse({"ok": False, "error": "no such asset"})
+
+        def transparent(m):
+            """White-on-black map → white-on-transparent: alpha follows the mark, black drops out."""
+            out = m.copy()
+            out[..., 3] = m[..., 0]
+            return out
+
+        if op == "edge":
+            lo, hi = int(body.get("lo", 100)), int(body.get("hi", 200))
+            img = Workspace.resolve(name, home).current_array()
+            ov = transparent(Transform.edge_detect(img, lo, hi))
+            Board(home).push_overlay(name, ov, "edge → mask")
+            return JSONResponse({"ok": True})
+        # close / bridge need an existing overlay (the edge map) to transform
+        try:
+            path = Workspace(os.path.join(home, name)).overlay_path()
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            path = None
+        if not path or not os.path.exists(path):
+            return JSONResponse({"ok": False, "error": "run Edge first"})
+        prev = Io.load(path)
+        if op == "keep":
+            # connected-components filter runs on the overlay's alpha (the marks) directly
+            k = int(body.get("keep", 1))
+            Board(home).push_overlay(name, Transform.keep_largest(prev, keep=k), "keep largest")
+            return JSONResponse({"ok": True})
+        mark = np.maximum(prev[..., 0], prev[..., 3])         # recover white marks (RGB or alpha)
+        work = np.zeros_like(prev)
+        work[..., :3] = mark[..., None]
+        work[..., 3] = 255                                    # opaque white-on-black for the op
+        if op == "close":
+            r = int(body.get("radius", 2))
+            Board(home).push_overlay(name, transparent(Transform.close_gaps(work, r)), "close")
+        elif op == "bridge":
+            ml = int(body.get("max_link", 100))
+            Board(home).push_overlay(name, transparent(Transform.bridge_gaps(work, ml)), "bridge")
+        else:
+            return JSONResponse({"ok": False, "error": f"unknown op {op!r}"})
+        return JSONResponse({"ok": True})
+
     async def mask_edge(request):
-        """Serve an asset's edge-map overlay PNG (green edges on transparency)."""
+        """Serve an asset's CURRENT mask-overlay version (the layer chain's HEAD). Falls
+        back to the legacy single-file overlay for assets predating the versioned chain."""
         name = os.path.basename(request.path_params["name"])
-        path = os.path.join(home, name, "mask_edge.png")
-        if not os.path.exists(path):
+        try:
+            path = Workspace(os.path.join(home, name)).overlay_path()
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            path = None
+        if not path or not os.path.exists(path):
+            legacy = os.path.join(home, name, "mask_edge.png")
+            path = legacy if os.path.exists(legacy) else None
+        if not path:
             return HTMLResponse("not found", status_code=404)
         return FileResponse(path)
 
@@ -275,6 +344,7 @@ def build_app(home: str) -> Starlette:
         Route("/api/dot", api_dot, methods=["POST"]),
         Route("/api/dots/clear", api_dots_clear, methods=["POST"]),
         Route("/api/connect", api_connect, methods=["POST"]),
+        Route("/api/derive", api_derive, methods=["POST"]),
         Route("/api/isolate", api_isolate, methods=["POST"]),
         Route("/api/undo", api_undo, methods=["POST"]),
         Route("/api/redo", api_redo, methods=["POST"]),

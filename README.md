@@ -205,12 +205,22 @@ image, separate from the pixel edit chain.
 |---|---|
 | `seed [[x,y],…]` | drop rough seed dots around the subject's edge (precision not needed) |
 | `connect` | join the dots into a boundary — **convex hull, then snap inward** through every dot (deterministic; the same dots always give the same concave silhouette) |
+| `outline [epsilon]` | the **unseeded** `connect`: trace the boundary straight from a matte's pixels (largest outer contour, simplified via Douglas–Peucker) — no dots placed. Needs alpha marking the subject (`key_background` first) |
+| `cutout [rect] [iterations]` | **auto**-isolate via iterated graph-cut segmentation (GrabCut): seed a rough box around the subject (or let it use the mask bbox / inset frame), and it cuts on colour **and** connectivity — separating the subject from same-coloured background a flat key can't. Keeps the largest region |
 | **`isolate`** ⭐ | fill that boundary into alpha = **the cutout** (transparent background, no interior holes) |
 | `clear_seeds` | wipe the dots + outline and start over |
 
 Then `defringe` melts any residual matte rim. Rough seeds in, tight matte out — the model
 seeds, looks at the cut, and nudges. The edit screen exposes the same flow as toolbox
 buttons (Dot → Connect → Cut out).
+
+The **unseeded** path is now live as `outline` (`Geometry.simplify_contour`): given a matte's
+alpha, it finds the outer contours and simplifies the largest into a sparse outline
+(Douglas–Peucker) — the same `[[x,y],…]` a hand-seeded `connect` produces and lands in the
+same `mask.outline` slot, but derived straight from the pixels. So the pipeline is
+`key_background → outline → isolate` with no dots. What's still missing for *fully*-automatic
+isolation is sourcing the silhouette from an edge map (close gaps → fill) rather than a
+pre-made matte — see the roadmap.
 
 **Workspace / board controls:** `undo`, `redo` (per-image, two-level — see below),
 `status`, `collapse`, `export`, `move` (place an asset on the canvas), `select` (make an
@@ -246,7 +256,7 @@ Assets are movable by the agent (the `move` tool) and by you (drag — the drop 
 - [x] annotate + shapes (`mark`, `draw_shape`, `draw_line`) and the live edit screen (Vite/React/Konva, SSE, left toolbox)
 - [x] **isolation** — seed dots → `hull_snap` (convex hull → snap inward) → `fill_polygon_alpha`
 - [x] per-image two-level undo (dots bundle into one action, each individually undoable mid-focus)
-- [ ] **fully-automatic isolation** — `edge_detect → close gaps → findContours → fill largest contour` (no seed dots)
+- [ ] **fully-automatic isolation** — `edge_detect → close gaps → findContours → fill largest contour` (no seed dots). The matte-sourced half landed as the `outline` tool (`key_background → outline → isolate`); still to do is deriving the silhouette from the edge map instead of a pre-made matte
 - [ ] **edge-snap** — pull the `hull_snap` outline onto the nearest strong image edge for a pixel-tight matte
 - [x] tests — `tests/` mirrors `src/`, ≥90% branch-coverage gate, Python (pytest) + frontend (vitest), wired into `make check`
 - [ ] a sample asset sheet

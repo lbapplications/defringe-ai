@@ -237,3 +237,157 @@ class Transform:
         out[..., :3] = edges[..., None]              # white where an edge fired
         out[..., 3] = 255                            # opaque so the black bg reads on the canvas
         return out
+
+    @staticmethod
+    def close_gaps(img: RGBA, radius: int = 2) -> RGBA:
+        """Seal hairline gaps in a binary/edge map via morphological closing (dilate → erode).
+
+        The step that tidies an edge map after :meth:`edge_detect`: a disk of the given
+        ``radius`` first **dilates** the white pixels so fragments that nearly touch merge,
+        then **erodes** back so the strokes return to their original thickness — net effect,
+        thin breaks bridge shut while the silhouette's bulk is unchanged. Note the direction:
+        closing *connects* nearby marks; it does **not** delete isolated background specks
+        (that is *opening* — erode → dilate). Reads the map's luminance (edge maps are
+        white-on-black) and rewrites every channel, alpha opaque.
+
+        Args:
+            img: Source RGBA — a binary/edge map (white marks on black).
+            radius: Structuring-element radius in pixels; the kernel is a
+                ``(2·radius+1)²`` ellipse. Larger ``radius`` bridges wider gaps (and rounds
+                corners more).
+
+        Returns:
+            A new RGBA map with gaps closed, RGB equal per pixel and alpha 255.
+        """
+        r = max(1, int(radius))
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+        closed = cv2.morphologyEx(img[..., 0], cv2.MORPH_CLOSE, k)   # channels are equal
+        out = np.zeros_like(img)
+        out[..., :3] = closed[..., None]
+        out[..., 3] = 255
+        return out
+
+    @staticmethod
+    def segment(img: RGBA, rect, iterations: int = 5, keep: int = 1) -> RGBA:
+        """Cut the subject from its background by iterated graph-cut segmentation (GrabCut).
+
+        Seeds foreground/background colour models from ``rect`` — everything outside the box is
+        declared background — then runs ``iterations`` graph-cut passes that jointly optimise a
+        colour term (does this pixel match the fg or bg model?) and a smoothness term (adjacent
+        similar pixels should share a label). Because it reasons over colour **and**
+        connectivity across the whole frame, it separates the subject from same-coloured
+        background that a per-pixel key (:meth:`key_background`) cannot. RGB is preserved; the
+        result's alpha is the segmented subject.
+
+        Args:
+            img: Source ``(H, W, 4)`` RGBA.
+            rect: Seed box ``[x, y, w, h]`` around the subject, in image pixels (clamped to the
+                frame). Everything outside it starts as definite background.
+            iterations: GrabCut passes; 1 usually suffices for a high-contrast subject.
+            keep: If > 0, keep only the ``keep`` largest connected components of the result
+                (drops stray segmented specks); 0 leaves every foreground pixel.
+
+        Returns:
+            A new RGBA with alpha = the segmented subject; RGB unchanged.
+        """
+        H, W = img.shape[:2]
+        x, y, w, h = (int(v) for v in rect)
+        # keep a ≥1px background border on every side — GrabCut needs some bg to seed from,
+        # so a rect covering the whole frame (no outside pixels) is illegal.
+        x = max(1, min(x, W - 2))
+        y = max(1, min(y, H - 2))
+        w = max(1, min(w, W - 1 - x))
+        h = max(1, min(h, H - 1 - y))
+        mask = np.zeros((H, W), np.uint8)
+        bgd = np.zeros((1, 65), np.float64)
+        fgd = np.zeros((1, 65), np.float64)
+        cv2.grabCut(np.ascontiguousarray(img[..., :3]), mask, (x, y, w, h),
+                    bgd, fgd, max(1, int(iterations)), cv2.GC_INIT_WITH_RECT)
+        fg = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+        out = img.copy()
+        out[..., 3] = fg
+        return Transform.keep_largest(out, keep=keep) if keep > 0 else out
+
+    @staticmethod
+    def keep_largest(img: RGBA, keep: int = 1, min_area: int = 0) -> RGBA:
+        """Isolate the biggest shape(s): the connected-components filter that drops noise.
+
+        Labels every 8-connected region of ``alpha > 0`` and clears the alpha of all but the
+        chosen ones — the ImageMagick ``-connected-components`` area filter. A component survives
+        if it is among the ``keep`` largest **or** its area is at least ``min_area``. So on a
+        keyed matte (subject + speckle fish) ``keep=1`` extracts the subject alone; on a keyed
+        edge overlay it drops every stray fragment but the main outline.
+
+        RGB is left untouched (only alpha is masked), so the result still composites correctly.
+
+        Args:
+            img: Source ``(H, W, 4)`` RGBA whose alpha marks the foreground.
+            keep: How many of the largest components to retain (by pixel area).
+            min_area: Also retain any component with at least this many pixels (``0`` = off).
+
+        Returns:
+            A new RGBA with only the kept components opaque in alpha; everything else alpha 0.
+        """
+        binary = (img[..., 3] > 0).astype(np.uint8)
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        out = img.copy()
+        if n <= 1:                                          # nothing but background
+            return out
+        ranked = sorted(range(1, n), key=lambda c: -int(stats[c, cv2.CC_STAT_AREA]))
+        kept = {c for i, c in enumerate(ranked)
+                if i < max(0, keep) or (min_area > 0 and int(stats[c, cv2.CC_STAT_AREA]) >= min_area)}
+        out[..., 3] = np.where(np.isin(labels, list(kept)), out[..., 3], 0)
+        return out
+
+    @staticmethod
+    def bridge_gaps(img: RGBA, max_link: int = 100, candidates: int = 12) -> RGBA:
+        """Stitch a broken edge map by linking each fragment to its nearest neighbour.
+
+        The graph alternative to :meth:`close_gaps`. Every connected white fragment is a node;
+        one pass draws an edge from each node to the *closest* other fragment (min pixel-to-
+        pixel Euclidean distance) whose gap is within ``max_link`` — a thin 1px bridge, not a
+        dilation. So the outline's fragments (all near one another) fuse into one connected
+        component, thin bridges only where real gaps were, and the strokes keep their original
+        weight — unlike closing, which fattens everything, noise included. A speck with nothing
+        within ``max_link`` stays orphaned (then droppable by keeping the largest component).
+
+        Search is bounded like a windowed/spiral scan: each fragment is pruned to its
+        ``candidates`` nearest by centroid before the exact min-distance test, so it does not
+        compare every fragment to every other.
+
+        Args:
+            img: Source RGBA — a binary/edge map (white marks on black).
+            max_link: Longest gap to bridge, in pixels; wider gaps are left unlinked.
+            candidates: How many centroid-nearest fragments to test per node (the window).
+
+        Returns:
+            A new RGBA map with 1px bridges drawn between nearest fragments, alpha 255.
+        """
+        binary = (img[..., 0] > 0).astype(np.uint8)
+        n, labels = cv2.connectedComponents(binary, connectivity=8)
+        out = img.copy()
+        out[..., 3] = 255
+        if n <= 2:                                           # 0=bg plus ≤1 fragment → nothing to link
+            return out
+        ys, xs = np.nonzero(binary)
+        comp = labels[ys, xs]
+        pts = {c: np.column_stack([xs[comp == c], ys[comp == c]]).astype(np.float64)
+               for c in range(1, n)}
+        keys = list(pts)
+        cent = np.array([pts[c].mean(0) for c in keys])       # (F, 2) fragment centroids
+        seg = np.ascontiguousarray(out[..., :3])
+        for i, c in enumerate(keys):
+            order = [j for j in np.argsort(np.hypot(*(cent - cent[i]).T)) if j != i]
+            best = None
+            for j in order[:max(1, candidates)]:             # window: nearest N fragments by centroid
+                a, b = pts[c], pts[keys[j]]
+                d = np.hypot(a[:, 0, None] - b[None, :, 0], a[:, 1, None] - b[None, :, 1])
+                ai, bi = divmod(int(np.argmin(d)), len(b))   # closest pixel pair between the two
+                if best is None or d[ai, bi] < best[0]:
+                    best = (float(d[ai, bi]), a[ai], b[bi])
+            if best and best[0] <= max_link:
+                p1 = (int(best[1][0]), int(best[1][1]))
+                p2 = (int(best[2][0]), int(best[2][1]))
+                cv2.line(seg, p1, p2, (255, 255, 255), 1, lineType=cv2.LINE_8)
+        out[..., :3] = seg
+        return out

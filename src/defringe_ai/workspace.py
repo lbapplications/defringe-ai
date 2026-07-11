@@ -9,11 +9,18 @@ Model
 -----
   source/<name>.png     the original, copied in once, never mutated
   history/NNNN-op.png   one full snapshot per edit (truly reversible)
-  manifest.json         {name, source, steps:[{op,params,file,ts}], head}
+  overlay/NNNN-op.png   one full snapshot per mask-overlay version (the LAYER chain)
+  manifest.json         {name, source, steps:[{op,params,file,ts}], head,
+                         overlay:{steps:[{label,file,ts}], head}}
 
   apply    -> snapshot, drop any redo tail, HEAD -> new step
   undo/redo-> move HEAD (snapshots are kept)
   collapse -> flatten history to HEAD as the lone base (the 'verified asset')
+
+The overlay chain rides *beside* the pixel chain: an append-only list of mask-overlay
+PNGs with its own `overlay_head` (-1 = no overlay). The board binds it to the per-image
+timeline the same way it binds `pixel_head`, so undo/goto restore an overlay's actual
+pixels — a real layer version — not merely a boolean flag.
 """
 
 from __future__ import annotations
@@ -165,6 +172,58 @@ class Workspace:
         m["head"] = 0
         self._write(m)
         return self.status()
+
+    # --- mask-overlay chain (the LAYER chain, sibling to the pixel chain) ---
+
+    def _overlay(self, m: dict) -> dict:
+        """The overlay sub-manifest, defaulted for assets opened before layers existed."""
+        return m.setdefault("overlay", {"steps": [], "head": -1})
+
+    def push_overlay(self, img: np.ndarray, label: str) -> int:
+        """Append a mask-overlay snapshot and point the overlay HEAD at it.
+
+        Append-only (like the pixel chain): the board records the resulting `overlay_head`
+        in a memento, so undo/goto restore this exact overlay's pixels. Snapshots after the
+        current HEAD are left on disk (harmless); a later push just appends past them.
+
+        Args:
+            img: The overlay RGBA to snapshot (transparency-keyed lines over the image).
+            label: The step label (e.g. ``"edge → mask"``, ``"simplify_contour"``).
+
+        Returns:
+            The new overlay version's index (its `overlay_head`).
+        """
+        m = self._read()
+        ov = self._overlay(m)
+        idx = len(ov["steps"])
+        os.makedirs(os.path.join(self.root, "overlay"), exist_ok=True)
+        step_file = os.path.join("overlay", f"{idx:04d}-{label}.png")
+        ops.Io.save(img, os.path.join(self.root, step_file))
+        ov["steps"].append({"label": label, "file": step_file, "ts": _now()})
+        ov["head"] = idx
+        self._write(m)
+        return idx
+
+    def overlay_head(self) -> int:
+        """The current overlay version index (-1 when the asset carries no overlay)."""
+        return int(self._overlay(self._read()).get("head", -1))
+
+    def set_overlay_head(self, idx: int) -> None:
+        """Point the overlay HEAD at a version (clamped; -1 = show no overlay). The board
+        calls this on undo/redo/goto so reverting a step restores that step's overlay."""
+        m = self._read()
+        ov = self._overlay(m)
+        ov["head"] = max(-1, min(int(idx), len(ov["steps"]) - 1))
+        self._write(m)
+
+    def overlay_path(self, idx: int | None = None) -> str | None:
+        """Absolute path to an overlay version (the current HEAD if `idx` is None), or
+        None when the index points at no overlay (-1 / out of range)."""
+        ov = self._overlay(self._read())
+        i = ov.get("head", -1) if idx is None else int(idx)
+        if 0 <= i < len(ov["steps"]):
+            return os.path.join(self.root, ov["steps"][i]["file"])
+        return None
 
     # --- edit sessions (the transactional gate) ----------------------------
 

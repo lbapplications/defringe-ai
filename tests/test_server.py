@@ -82,10 +82,13 @@ def test_edge_detect_makes_a_mask_overlay(app):
 
     st = app.edge_detect(lo=50, hi=150)
     assert st["head"] == 0 and st["chain"] == ["open"]        # image untouched — original stays HEAD
-    assert os.path.exists(os.path.join(app.HOME, "shark", "mask_edge.png"))
-    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is True
+    # the overlay is a VERSIONED layer snapshot, not a single-file flag
+    assert os.path.exists(os.path.join(app.HOME, "shark", "overlay", "0000-edge → mask.png"))
+    a = Board(app.HOME).sync()["assets"]["shark"]
+    assert a["mask"]["edge"] is True and a["overlay_head"] == 0
     Board(app.HOME).undo("shark")                            # image-level undo clears the overlay
-    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is False
+    a = Board(app.HOME).sync()["assets"]["shark"]
+    assert a["mask"]["edge"] is False and a["overlay_head"] == -1
 
 
 def test_edge_detect_no_workspace_raises(srv):
@@ -142,6 +145,75 @@ def test_seed_connect_isolate(app):
     # cutout: outside the polygon is transparent
     img = Workspace.active(app.HOME).current_array()
     assert img[0, 0, 3] == 0
+
+
+def test_outline_traces_matte_then_isolate(app):
+    from defringe_ai import imageops as ops
+    # key the white ground → alpha now marks the dark square (the matte `outline` traces)
+    Workspace.active(app.HOME).apply("key_background", ops.Transform.key_background, {"bg": "white"})
+    ms = app.outline(epsilon=1.0)
+    assert ms.dots == 0 and ms.outline >= 3        # boundary from pixels, no seeds placed
+    b = app.Board(app.HOME).sync()
+    assert b["assets"]["shark"]["mask"]["outline"]  # landed in the same slot connect fills
+    res = app.isolate()                             # cuts the traced polygon
+    assert res.chain[-1] == "isolate"
+
+
+def _wipe_alpha(img):
+    img = img.copy()
+    img[..., 3] = 0        # no opaque pixel → no contour to trace
+    return img
+
+
+def test_outline_without_matte_raises(app):
+    # no subject in alpha → nothing traceable → a clear error, not a bogus outline
+    Workspace.active(app.HOME).apply("wipe_alpha", _wipe_alpha, {})
+    with pytest.raises(ValueError):
+        app.outline()
+
+
+def test_cutout_segments_subject(srv, tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    # 80x80 scene: noisy blue ground + a red subject block → cutout should segment the block
+    rng = np.random.default_rng(2)
+    a = np.zeros((80, 80, 4), np.uint8)
+    a[..., 3] = 255
+    a[..., 2] = rng.integers(180, 220, (80, 80))
+    a[26:54, 26:54, 0] = rng.integers(180, 220, (28, 28))
+    a[26:54, 26:54, 2] = rng.integers(0, 40, (28, 28))
+    p = tmp_path / "box.png"
+    Image.fromarray(a, "RGBA").save(p)
+    srv.open_asset(str(p), name="box")
+
+    res = srv.cutout(rect=[22, 22, 36, 36], iterations=3)
+    assert res.chain[-1] == "cutout"
+    out = Workspace.active(srv.HOME).current_array()
+    assert out[0, 0, 3] == 0            # outside the seed rect → transparent
+    assert out[40, 40, 3] == 255        # subject centre kept
+    # undoable: reverting the pixel step restores the opaque original
+    srv.undo("box")
+    assert Workspace.active(srv.HOME).current_array()[0, 0, 3] == 255
+
+
+def test_cutout_auto_rect_from_frame(srv, tmp_path):
+    import numpy as np
+    from PIL import Image
+
+    rng = np.random.default_rng(3)
+    a = np.zeros((80, 80, 4), np.uint8)
+    a[..., 3] = 255
+    a[..., 2] = rng.integers(180, 220, (80, 80))
+    a[20:60, 20:60, 0] = rng.integers(180, 220, (40, 40))
+    a[20:60, 20:60, 2] = rng.integers(0, 40, (40, 40))
+    p = tmp_path / "box2.png"
+    Image.fromarray(a, "RGBA").save(p)
+    srv.open_asset(str(p), name="box2")
+    # no rect + no seeds → falls back to the inset-frame seed box
+    res = srv.cutout()
+    assert res.chain[-1] == "cutout"
+    assert (Workspace.active(srv.HOME).current_array()[..., 3] > 0).any()
 
 
 def test_isolate_without_outline_raises(app):
