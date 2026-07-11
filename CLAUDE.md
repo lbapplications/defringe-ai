@@ -8,6 +8,13 @@ is one motivating case; the question is general.
 - **What it is / how to run it / the full tool reference → [README.md](README.md)** (user-facing).
 - **How to work in this repo → the rules below.** This file is just the map.
 
+## Always: show me what you did
+
+When I ask you to do something, I expect to **see the result** — not just a description of
+it. Ran a tool on an image? Show the output image. Changed code or docs? Show the diff.
+Cleared/edited state? Show the before→after. "Looking" is half the loop this repo exists to
+test — so surface the artifact every time, don't make me ask for it.
+
 ## Rules — read the ones in scope before you act
 
 Guidance lives in `.claude/rules/`, one **orthogonal** concern per file. Don't scatter a
