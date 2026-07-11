@@ -17,7 +17,7 @@ it one, and don't leave a headline capability reachable only from a web route.
 |---|---|---|---|
 | `Io` (`utils`) | RGBA read/write | `load`, `save` | — (substrate) |
 | `Color` (`utils`) | colour parsing (shared) | `parse`, `parse_rgb`, `NAMED` | — (substrate) |
-| `Transform` (`transform.py`) | matte extraction + pixel cleanup | `key_background`, `trim_alpha`, `crop`, `defringe`, `upscale`, `silhouette_mask`, `canny` | same names (gated) |
+| `Transform` (`transform.py`) | matte extraction + pixel cleanup | `key_background`, `trim_alpha`, `crop`, `defringe`, `upscale`, `silhouette_mask`, `edge_detect` | same names (gated) |
 | `Shape` (`shape.py`) | draw primitives + anchor/box model | `resolve_box`, `draw_shape`, `draw_line` | `draw_shape`, `draw_line` (gated) |
 | `Annotate` (`annotate.py`) | seed dots burned into pixels | `mark` | `mark` (gated) |
 | `Geometry` (`geometry.py`) | dots → outline → matte (seeded isolation) | `convex_hull`, `hull_snap`, `fill_polygon_alpha` | `seed`, `connect`, `isolate`, `clear_seeds` |

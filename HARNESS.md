@@ -30,6 +30,8 @@ that match what you're about to do:
 | [architecture](harness_driver/architecture.md) | navigate or add code — the layers and what stays orthogonal to what |
 | [frontend](harness_driver/frontend.md) | touch `frontend/` — the Vite/React/Konva edit screen, its taxonomy, and how it's built/served |
 | [tools](harness_driver/tools.md) | add or edit an image tool — a tool isn't real until it's MCP-registered; NumPy/Pydantic/README standards + the gate |
+| [nomenclature](harness_driver/nomenclature.md) | name a tool / concept, or wonder which word to use — the canonical vocabulary (name the *outcome*, not the algorithm) + the enforced banned-name ledger |
+| [testing](harness_driver/testing.md) | add or change code — the mirror-of-src suite, the ≥90% coverage gate, and the "keep it fast" rule (Python **and** frontend) |
 | [orthogonalization](harness_driver/orthogonalization.md) | add a class/module, move code between areas, or surface a taxonomy shift |
 | [docstrings](harness_driver/docstrings.md) | write or edit ANY function — Google-style, kept in sync |
 | [coordinates](harness_driver/coordinates.md) | do any geometry / pixel-indexing / dot / drawing work (the `arr[y,x]` trap) |

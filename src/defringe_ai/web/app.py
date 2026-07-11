@@ -113,7 +113,11 @@ def _chains(home: str) -> str:
 
 # --- server ----------------------------------------------------------------
 
-def serve_preview(home: str, host: str, port: int) -> None:
+def build_app(home: str) -> Starlette:
+    """Build the edit-screen Starlette app over `home` — every route closes over it.
+
+    Split out from :func:`serve_preview` so the app can be exercised with Starlette's
+    in-process ``TestClient`` (no uvicorn, no sockets) — that's what the test suite drives."""
     async def index(_r):
         idx = os.path.join(DIST, "index.html")
         if os.path.exists(idx):
@@ -127,7 +131,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
     async def chains(_r):
         return HTMLResponse(_chains(home))
 
-    async def events(request):
+    async def events(request):  # pragma: no cover — infinite SSE stream; a live-server path
         async def gen():
             yield f"event: build\ndata: {BUILD}\n\n"      # tab auto-reloads if this changed
             last, beat = None, 0
@@ -262,5 +266,9 @@ def serve_preview(home: str, host: str, port: int) -> None:
     # unbuilt checkout still boots (index() then shows the "run pnpm build" hint).
     if os.path.isdir(os.path.join(DIST, "assets")):
         routes.append(Mount("/assets", app=StaticFiles(directory=os.path.join(DIST, "assets"))))
-    app = Starlette(routes=routes)
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    return Starlette(routes=routes)
+
+
+def serve_preview(home: str, host: str, port: int) -> None:  # pragma: no cover
+    """Run the edit-screen app under uvicorn (the live server; not exercised in tests)."""
+    uvicorn.run(build_app(home), host=host, port=port, log_level="warning")

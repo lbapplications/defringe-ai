@@ -18,7 +18,11 @@ nothing from the package (pure `ast` + file reads), so it's fast and side-effect
 | `tool-registry` | [tools](../harness_driver/tools.md) | an `@mcp.tool()` isn't in `TAXONOMY`, or a `TAXONOMY` name has no tool |
 | `tool-docstrings` | [docstrings](../harness_driver/docstrings.md) | an `@mcp.tool()` has no docstring |
 | `readme-tools` | [tools](../harness_driver/tools.md) | a tool name isn't referenced in the README (as `` `name` ``) |
+| `nomenclature` | [nomenclature](../harness_driver/nomenclature.md) | a tool/subcommand name isn't snake_case, or uses a banned (implementation-named) word from the ledger in `nomenclature.md` |
 | `frontend-io` | [frontend](../harness_driver/frontend.md) | a bare `fetch(` appears in a component (server I/O must go through `state.ts`) |
+
+Beyond the mechanical checks, the deterministic lane also runs the **test suite + coverage
+gate** (`uv run pytest`, ≥90% branch coverage) — see [testing](../harness_driver/testing.md).
 
 ## Run
 

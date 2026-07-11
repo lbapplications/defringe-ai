@@ -9,6 +9,7 @@ from `harness_driver/` into code:
   tool-docstrings every @mcp.tool() has a docstring                 (docstrings.md)
   readme-tools    every tool name appears in the README             (tools.md)
   frontend-io     no bare fetch( in a React component               (frontend.md)
+  nomenclature    tool names are snake_case + no banned name        (nomenclature.md)
 
 Pure stdlib + `ast` — imports nothing from the package, so it runs fast and has no side
 effects. Exit code is the number of failing checks (0 = clean).
@@ -25,6 +26,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER = os.path.join(ROOT, "src", "defringe_ai", "server.py")
 README = os.path.join(ROOT, "README.md")
 FRONTEND = os.path.join(ROOT, "frontend", "src")
+NOMENCLATURE = os.path.join(ROOT, "harness_driver", "nomenclature.md")
+
+SNAKE = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 # Names that appear in TAXONOMY but are deliberately NOT their own @mcp.tool() function.
 # Keep this tight and explained — every entry is a real, intentional exception.
@@ -109,6 +113,39 @@ def check_readme_tools(tools, text: str | None = None) -> bool:
     return True
 
 
+def banned_names(text: str | None = None) -> set[str]:
+    """Parse the banned-tool-name ledger out of nomenclature.md — the backtick-quoted first
+    token of each `- ...` line between the `<!-- nomenclature:banned -->` markers. The doc is
+    the source of truth; this reads it so a naming decision made there is enforced here."""
+    if text is None:
+        with open(NOMENCLATURE) as f:
+            text = f.read()
+    block = re.search(r"<!-- nomenclature:banned -->(.*?)<!-- /nomenclature:banned -->", text, re.S)
+    if not block:
+        return set()
+    return set(re.findall(r"^\s*-\s*`([^`]+)`", block.group(1), re.M))
+
+
+def check_nomenclature(tools, taxonomy, banned: set[str] | None = None) -> bool:
+    """Tool/subcommand names must be snake_case and must not use a banned (implementation-
+    named) word — the rule from nomenclature.md, enforced against the live TAXONOMY."""
+    if banned is None:
+        banned = banned_names()
+    names = set(tools) | taxonomy
+    not_snake = sorted(n for n in names if not SNAKE.match(n))
+    hits = sorted(n for n in names if n in banned)
+    if not_snake or hits:
+        parts = []
+        if not_snake:
+            parts.append(f"not snake_case: {not_snake}")
+        if hits:
+            parts.append(f"banned (implementation-named) tool names: {hits} — see nomenclature.md")
+        _fail("nomenclature", "; ".join(parts))
+        return False
+    _ok("nomenclature", f"{len(names)} names snake_case, none banned ({len(banned)} on the ledger)")
+    return True
+
+
 def check_frontend_io(srcdir: str | None = None) -> bool:
     """All server I/O goes through state.ts — no bare fetch( in a component."""
     srcdir = srcdir or FRONTEND
@@ -139,6 +176,7 @@ def main() -> int:
         check_tool_registry(tools, taxonomy),
         check_tool_docstrings(tools),
         check_readme_tools(tools),
+        check_nomenclature(tools, taxonomy),
         check_frontend_io(),
     ]
     failed = results.count(False)

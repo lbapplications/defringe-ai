@@ -31,10 +31,10 @@ class IsolateResult(BaseModel):
     chain: list[str] = Field(description="The ordered op names in the edit chain.")
 
 
-class CannyTuneResult(BaseModel):
-    """One step of the agent-in-the-loop Canny threshold search (binary search over the
-    hysteresis level). While `done` is False, LOOK at `current`, judge it, and call
-    `canny_tune(verdict=...)` again; when `done` is True the winning edge map is committed."""
+class EdgeDetectTuneResult(BaseModel):
+    """One step of the agent-in-the-loop edge-detection threshold search (binary search over
+    the Canny hysteresis level). While `done` is False, LOOK at `current`, judge it, and call
+    `edge_detect_tune(verdict=...)` again; when `done` is True the winning edge map is committed."""
 
     workspace: str = Field(description="The asset being tuned.")
     done: bool = Field(description="True once the search converged and the edge map is committed (undo restores the original).")

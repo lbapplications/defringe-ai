@@ -110,6 +110,20 @@ Logs land in `logs/` (gitignored). Ports: **47823** MCP, **47824** edit screen, 
 Vite dev. Changing any of this (a port, a flag, the run flow) means updating this section —
 see `harness_driver/dev.md`.
 
+## Tests
+
+Two fast suites, both gated at **≥90%** coverage and run by `make check`:
+
+```bash
+make test                      # Python (pytest) + frontend (vitest) + linter self-tests
+uv run pytest                  # Python only: tests/ mirrors src/, branch coverage, <1s
+pnpm --dir frontend test       # frontend only: state.ts logic (Vitest + jsdom)
+```
+
+`tests/` mirrors `src/defringe_ai/` file-for-file. The gate is a **floor** — as code grows,
+coverage stays ≥90% or the build fails. Details + how to test each layer:
+`harness_driver/testing.md`.
+
 Ports default to the **uncommon** `47823` (MCP) / `47824` (preview) and **auto-bump to
 the next free port** if taken — so it runs beside whatever an artist already has open.
 `--preview` serves a live view of the edit chain with `HEAD` marked (auto-refresh,
@@ -168,8 +182,8 @@ touched last.
 
 | Tool | Does |
 |---|---|
-| `canny` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal*, applied in place. Records an image-level step, so **hitting back/undo restores the original image** |
-| `canny_tune` ⭐ | **adaptive** Canny — find the threshold by *looking*, not guessing. A binary search baked into the tool: it renders the mid-range edges and asks; you reply `reduce` / `more` / `good`; it halves the range and re-renders, converging in ≤3 probes (or 2 `more`s), then commits. The repo's loop in one call — the tool owns the search, the agent owns the judgement |
+| `edge_detect` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal*, applied in place. Records an image-level step, so **hitting back/undo restores the original image** |
+| `edge_detect_tune` ⭐ | **adaptive** edge detection — find the threshold by *looking*, not guessing. A binary search baked into the tool: it renders the mid-range edges and asks; you reply `reduce` / `more` / `good`; it halves the range and re-renders, converging in ≤3 probes (or 2 `more`s), then commits. The repo's loop in one call — the tool owns the search, the agent owns the judgement |
 
 **Annotate & shapes** — for flagging locations and drawing guides (burned into pixels):
 
@@ -227,14 +241,15 @@ Assets are movable by the agent (the `move` tool) and by you (drag — the drop 
 
 ## Roadmap
 
-- [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`, `canny`)
+- [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`, `edge_detect`)
 - [x] on-disk workspace with reversible undo/redo + `collapse` (verify), shared by CLI and MCP
 - [x] annotate + shapes (`mark`, `draw_shape`, `draw_line`) and the live edit screen (Vite/React/Konva, SSE, left toolbox)
 - [x] **isolation** — seed dots → `hull_snap` (convex hull → snap inward) → `fill_polygon_alpha`
 - [x] per-image two-level undo (dots bundle into one action, each individually undoable mid-focus)
-- [ ] **fully-automatic isolation** — `canny → close gaps → findContours → fill largest contour` (no seed dots)
+- [ ] **fully-automatic isolation** — `edge_detect → close gaps → findContours → fill largest contour` (no seed dots)
 - [ ] **edge-snap** — pull the `hull_snap` outline onto the nearest strong image edge for a pixel-tight matte
-- [ ] tests + a sample asset sheet
+- [x] tests — `tests/` mirrors `src/`, ≥90% branch-coverage gate, Python (pytest) + frontend (vitest), wired into `make check`
+- [ ] a sample asset sheet
 - [ ] `tint`/`recolor`, `feather`, `drop-shadow`, `flip`/`rotate`
 - [ ] `remove_bg` (ML via `rembg`, `pip install defringe-ai[ml]`) for photographic inputs
 - [ ] publish to the MCP registry

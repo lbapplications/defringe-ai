@@ -87,6 +87,30 @@ expect("readme: substring must be in backticks",
        not check.check_readme_tools(tools, "alpha and beta as plain words"))
 
 
+# --- nomenclature ---------------------------------------------------------
+
+LEDGER = """
+prose before
+<!-- nomenclature:banned -->
+- `canny` → `edge_detect` (name the outcome)
+- `grabcut` → name the outcome
+<!-- /nomenclature:banned -->
+prose after
+"""
+banned = check.banned_names(LEDGER)
+expect("nomenclature: ledger parsed from markers", banned == {"canny", "grabcut"})
+expect("nomenclature: no-marker text is empty", check.banned_names("nothing here") == set())
+expect("nomenclature: clean snake_case names pass",
+       check.check_nomenclature(tools, {"alpha", "beta"}, banned))
+expect("nomenclature: a banned tool name fails",
+       not check.check_nomenclature(_tools('from x import mcp\n@mcp.tool()\ndef canny():\n "d"\n'),
+                                    {"canny"}, banned))
+expect("nomenclature: camelCase name fails",
+       not check.check_nomenclature(tools, {"alpha", "betaTool"}, banned))
+expect("nomenclature: hyphen name fails",
+       not check.check_nomenclature(tools, {"alpha", "edge-detect"}, banned))
+
+
 # --- frontend-io ----------------------------------------------------------
 
 with tempfile.TemporaryDirectory() as d:

@@ -167,8 +167,8 @@ class Transform:
         return out
 
     @staticmethod
-    def canny(img: RGBA, lo: int = 100, hi: int = 200) -> RGBA:
-        """Compute a Canny edge map (white edges on opaque black).
+    def edge_detect(img: RGBA, lo: int = 100, hi: int = 200) -> RGBA:
+        """Compute an edge map via the Canny algorithm (white edges on opaque black).
 
         The *edge signal*, not an isolation — closing the gaps + ``findContours`` + fill
         would turn it into a cutout (see :mod:`.geometry` for the seeded path).

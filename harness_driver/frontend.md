@@ -35,6 +35,11 @@ drag/resize** (that was the old `canvas.js` sin this rewrite deleted). Source li
    one place each and change **together** (a field added server-side is added to `Asset`).
 5. **Coordinates match the backend:** the server speaks image-space `(x, y)`, top-left
    origin (see [coordinates](coordinates.md)); multiply by `dispScale` for on-board pixels.
+6. **`state.ts` is unit-tested** (`frontend/src/state.test.ts`, Vitest + jsdom): the
+   helpers, `post` (mock `fetch`), and `useBoard` (fake `EventSource`). Because all logic
+   and I/O concentrate in `state.ts`, that's where the coverage sits — keep new data-plane
+   logic there so it stays testable (the canvas/Konva components aren't unit-tested). Run
+   `pnpm --dir frontend test`; the ≥90% gate is in `vite.config.ts`. See [testing](testing.md).
 
 ## Build / run — see [server-ops](server-ops.md)
 
