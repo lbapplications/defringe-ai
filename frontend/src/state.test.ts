@@ -7,8 +7,8 @@ function asset(over: Partial<Asset> = {}): Asset {
   return {
     name: "a", x: 0, y: 0, scale: 1, z: 0, head: 0, steps: 1, w: 100, h: 50,
     op: "open", selected: false, editing: false, intent: "", rev: "0-1",
-    locked: false, dots: [], outline: [], can_undo: false, can_redo: false,
-    timeline: [], ...over,
+    locked: false, dots: [], outline: [], edge: false, edge_rev: "",
+    can_undo: false, can_redo: false, timeline: [], ...over,
   };
 }
 

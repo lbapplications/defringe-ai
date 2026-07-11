@@ -86,3 +86,41 @@ def test_edge_detect_fires_on_the_square(rgba):
     assert (edges[..., 3] == 255).all()           # opaque black canvas
     # some edge pixels fired (white), around the square border
     assert (edges[..., 0] == 255).any()
+
+
+def test_matrix_sweep_keys_black_out_and_glows(rgba):
+    edges = Transform.edge_detect(rgba, lo=50, hi=150)
+    ov = Transform.matrix_sweep(edges, color="#35ff7d", bold=1, glow=2.0)
+    assert ov.shape == rgba.shape
+    # black background -> fully transparent; the edge core -> fully opaque
+    assert ov[..., 3].min() == 0
+    assert ov[..., 3].max() == 255
+    # surviving pixels carry the vivid colour (green dominates R and B)
+    lit = ov[..., 3] > 200
+    assert lit.any()
+    g = ov[lit]
+    assert (g[:, 1] > g[:, 0]).all() and (g[:, 1] > g[:, 2]).all()
+
+
+def test_matrix_sweep_no_glow_no_bold_is_crisp(rgba):
+    edges = Transform.edge_detect(rgba, lo=50, hi=150)
+    ov = Transform.matrix_sweep(edges, bold=0, glow=0.0)
+    # with no halo, alpha is strictly binary: on the edge or fully transparent
+    assert set(np.unique(ov[..., 3])).issubset({0, 255})
+
+
+def test_matrix_sweep_negative_inverts_the_base(rgba):
+    edges = Transform.edge_detect(rgba, lo=50, hi=150)
+    ov = Transform.matrix_sweep(edges, mode="negative", base=rgba, bold=0, glow=0.0)
+    lit = ov[..., 3] > 0
+    assert lit.any()
+    # every lit pixel is the photographic negative of the base at that spot
+    exp = 255 - rgba[..., :3].astype(int)
+    assert (ov[..., :3].astype(int)[lit] == exp[lit]).all()
+
+
+def test_matrix_sweep_white_mode(rgba):
+    edges = Transform.edge_detect(rgba, lo=50, hi=150)
+    ov = Transform.matrix_sweep(edges, mode="white", bold=0, glow=0.0)
+    lit = ov[..., 3] > 0
+    assert (ov[..., :3][lit] == 255).all()

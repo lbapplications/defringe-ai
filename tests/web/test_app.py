@@ -99,7 +99,23 @@ def test_build_state_and_sig_direct(loaded_home):
     home, name = loaded_home
     state = webapp.build_state(home)
     assert state and state[0]["name"] == name
+    assert state[0]["edge"] is False and state[0]["edge_rev"] == ""     # no overlay yet
     assert isinstance(webapp._sig(state), str)
+
+
+def test_mask_edge_route_and_state(client):
+    c, home, name = client
+    assert c.get(f"/mask/{name}").status_code == 404                    # no overlay yet
+    # lay down an edge overlay and confirm it's served + reflected in the pushed state
+    from defringe_ai import imageops as ops
+    img = Workspace.resolve(name, home).current_array()
+    ops.Io.save(ops.Transform.matrix_sweep(ops.Transform.edge_detect(img)),
+                os.path.join(home, name, "mask_edge.png"))
+    Board(home).set_edge(name, True)
+    assert c.get(f"/mask/{name}").status_code == 200
+    assert c.get("/mask/ghost").status_code == 404
+    st = next(a for a in webapp.build_state(home) if a["name"] == name)
+    assert st["edge"] is True and st["edge_rev"] != ""
 
 
 def test_web_package_reexport():

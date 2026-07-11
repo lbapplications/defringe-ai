@@ -15,6 +15,7 @@ Transforms (key_background, crop, defringe, …) are exposed as MCP tools for th
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import threading
 
@@ -43,7 +44,7 @@ TAXONOMY = {
     "shape":     ["draw_shape", "draw_line"],           # draw primitives onto the image
     "annotate":  ["mark"],                               # drop debug/seed dots
     "isolate":   ["seed", "connect", "isolate", "clear_seeds"],  # dots -> outline -> matte
-    "derive":    ["edge_detect", "edge_detect_tune"],    # extract a SIGNAL in place — self-contained, image-level undoable
+    "derive":    ["edge_detect", "edge_detect_tune"],    # extract a SIGNAL as a mask overlay — image untouched, undoable
     "arrange":   ["move", "select"],                     # canvas layout — not gated
     "workspace": ["open_asset", "list_workspaces", "list_shapes", "taxonomy", "status", "undo", "redo", "collapse", "export"],
 }
@@ -224,27 +225,35 @@ def silhouette_mask(workspace: str = "") -> dict:
 
 @mcp.tool()
 def edge_detect(lo: int = 100, hi: int = 200, workspace: str = "") -> dict:
-    """[derive] Edge map (Canny) — white edges on black, applied in place. `lo`/`hi` are the
-    hysteresis thresholds (100/200 classic; lower them to catch fainter edges, raise to
-    keep only strong ones). Self-contained — opens and commits its own edit, and records
-    an image-level step so you can **undo/back to restore the original**. The edge
-    *signal*, not an isolation."""
+    """[derive] Edge map (Canny) laid down as a **mask overlay**, not a pixel edit — the
+    original image is untouched and stays HEAD. `lo`/`hi` are the hysteresis thresholds
+    (100/200 classic; lower them to catch fainter edges, raise to keep only strong ones).
+    The edges are swept into a vivid, transparency-keyed overlay (matrix_sweep) that rides
+    on top of the image under the mask view. The edge *signal*, not an isolation; undo
+    clears the overlay."""
     name = _name(workspace)
     if not name:
         raise ValueError("no active workspace — open an asset first")
     return _edge_detect_apply(name, lo, hi)
 
 
+def _edge_overlay(img, lo: int, hi: int):
+    """The edge mask overlay we render: thin **negative-of-the-image** lines (each edge
+    pixel inverts what's beneath it, so it stays visible over any colour), keyed onto
+    transparency. One place defines the look — both edge_detect and the tune search use it."""
+    return ops.Transform.matrix_sweep(
+        ops.Transform.edge_detect(img, lo, hi), mode="negative", base=img, bold=0, glow=0)
+
+
 def _edge_detect_apply(name: str, lo: int, hi: int) -> dict:
-    """Burn the edge map onto the asset in place, through the edit gate (so it's a
-    clean transaction), then record an image-level undo step — `undo` restores the
-    original image."""
+    """Compute the edge map from the asset's current image and lay it down as a MASK
+    OVERLAY (thin negative lines, transparency-keyed via matrix_sweep). The image is
+    untouched — the original stays HEAD; the overlay PNG lives at ``<root>/mask_edge.png``
+    and the board flags it so the edit screen shows it under the mask view. Undo clears it."""
     ws = Workspace.resolve(name, HOME)
-    ws.begin_edit("edge_detect (edge map)")
-    st = ws.apply("edge_detect", ops.Transform.edge_detect, {"lo": lo, "hi": hi})
-    ws.commit_edit()
-    Board(HOME).record_pixel_edit(name, "edge_detect")   # image-level undo step → back restores original
-    return st
+    ops.Io.save(_edge_overlay(ws.current_array(), lo, hi), os.path.join(ws.root, "mask_edge.png"))
+    Board(HOME).set_edge(name, True)
+    return ws.status()
 
 
 # --- adaptive edge detection: an agent-in-the-loop binary search over the threshold -----
@@ -257,11 +266,14 @@ _TUNE_MAX_PROBES = 3
 _TUNE_MAX_NOS = 2
 
 
-def _tune_render(ws: Workspace, cand: int, base_head: int) -> dict:
-    """Reset to the pre-tune image, then burn the candidate edge map on top — a visible,
-    undoable preview that REPLACES the previous candidate (never stacks)."""
-    ws.set_head(base_head)
-    return ws.apply("edge_detect", ops.Transform.edge_detect, {"lo": cand // 2, "hi": cand})
+def _tune_render(name: str, ws: Workspace, cand: int) -> dict:
+    """Render the candidate edge map as the asset's mask overlay — the original image is
+    untouched and stays HEAD. Overwrites the previous preview (never stacks); the flag is
+    set WITHOUT recording, since a search's probes shouldn't spam the undo timeline."""
+    ops.Io.save(_edge_overlay(ws.current_array(), cand // 2, cand),
+                os.path.join(ws.root, "mask_edge.png"))
+    Board(HOME).set_edge(name, True, record=False)
+    return ws.status()
 
 
 def _tune_question(cand: int, probe: int) -> str:
@@ -283,11 +295,11 @@ def _tune_result(name: str, st: dict, state: dict, done: bool) -> EdgeDetectTune
 
 
 def _tune_commit(ws: Workspace, name: str, state: dict) -> EdgeDetectTuneResult:
-    """Apply the converged candidate, commit the transaction, record an image-level undo
-    step, and clear the search state."""
-    st = _tune_render(ws, state["cand"], state["base_head"])
-    ws.commit_edit()
-    Board(HOME).record_pixel_edit(name, "edge_detect")
+    """Finalise the converged candidate as the mask overlay, record the single image-level
+    undo step (so the whole search collapses to one 'edge → mask' action), and clear the
+    search state."""
+    st = _tune_render(name, ws, state["cand"])
+    Board(HOME).set_edge(name, True, record=True)
     ws.scratch_clear(_TUNE_KEY)
     return _tune_result(name, st, state, done=True)
 
@@ -312,10 +324,8 @@ def edge_detect_tune(verdict: str = "", workspace: str = "") -> EdgeDetectTuneRe
     if not verdict or state is None:
         lo_b, hi_b = _TUNE_LEVEL
         cand = (lo_b + hi_b) // 2
-        base_head = ws.head()
-        ws.begin_edit("edge_detect_tune")
-        st = _tune_render(ws, cand, base_head)
-        state = {"lo_b": lo_b, "hi_b": hi_b, "cand": cand, "probe": 1, "nos": 0, "base_head": base_head}
+        st = _tune_render(name, ws, cand)
+        state = {"lo_b": lo_b, "hi_b": hi_b, "cand": cand, "probe": 1, "nos": 0}
         ws.scratch_set(_TUNE_KEY, state)
         return _tune_result(name, st, state, done=False)
 
@@ -336,7 +346,7 @@ def edge_detect_tune(verdict: str = "", workspace: str = "") -> EdgeDetectTuneRe
     if state["probe"] > _TUNE_MAX_PROBES or state["nos"] >= _TUNE_MAX_NOS:
         return _tune_commit(ws, name, state)
 
-    st = _tune_render(ws, state["cand"], state["base_head"])
+    st = _tune_render(name, ws, state["cand"])
     ws.scratch_set(_TUNE_KEY, state)
     return _tune_result(name, st, state, done=False)
 
@@ -519,7 +529,7 @@ def main() -> None:
     mk.add_argument("--radius", type=int, default=4)
     mk.add_argument("--color", default="black")
 
-    cn = sub.add_parser("edge_detect", help="edge map (Canny) — in place, self-contained; undo restores the original")
+    cn = sub.add_parser("edge_detect", help="edge map (Canny) → mask overlay; image untouched, undo clears it")
     cn.add_argument("workspace", nargs="?", default="")
     cn.add_argument("--lo", type=int, default=100)
     cn.add_argument("--hi", type=int, default=200)
@@ -608,8 +618,8 @@ def main() -> None:
             name = args.workspace or _get_active(HOME) or ""
             if not name:
                 raise ValueError("no active workspace — open an asset first")
-            _print(_edge_detect_apply(name, args.lo, args.hi))   # in place; undo restores the original
-            print(f"  edge map (lo={args.lo}, hi={args.hi}) — undo to restore the original")
+            _print(_edge_detect_apply(name, args.lo, args.hi))   # mask overlay; image untouched
+            print(f"  edge map (lo={args.lo}, hi={args.hi}) → mask overlay; undo clears it")
         except ValueError as e:
             print(f"  REFUSED: {e}")
     elif args.cmd == "line":

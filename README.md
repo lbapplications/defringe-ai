@@ -182,8 +182,8 @@ touched last.
 
 | Tool | Does |
 |---|---|
-| `edge_detect` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal*, applied in place. Records an image-level step, so **hitting back/undo restores the original image** |
-| `edge_detect_tune` ⭐ | **adaptive** edge detection — find the threshold by *looking*, not guessing. A binary search baked into the tool: it renders the mid-range edges and asks; you reply `reduce` / `more` / `good`; it halves the range and re-renders, converging in ≤3 probes (or 2 `more`s), then commits. The repo's loop in one call — the tool owns the search, the agent owns the judgement |
+| `edge_detect` | `cv2.Canny` edge map (`lo`/`hi` hysteresis) swept into a **mask overlay** (thin negative-of-the-image lines via `matrix_sweep`) laid over the asset — the **original image is untouched and stays HEAD**; the overlay shows under the mask view, undo clears it. The edge *signal*, not an isolation |
+| `edge_detect_tune` ⭐ | **adaptive** edge detection — find the threshold by *looking*, not guessing. A binary search baked into the tool: it renders the mid-range edge overlay and asks; you reply `reduce` / `more` / `good`; it halves the range and re-renders, converging in ≤3 probes (or 2 `more`s), then records the winning overlay. The repo's loop in one call — the tool owns the search, the agent owns the judgement |
 
 **Annotate & shapes** — for flagging locations and drawing guides (burned into pixels):
 

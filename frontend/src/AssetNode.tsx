@@ -21,6 +21,8 @@ type Props = {
 // mask geometry is mapped image-space -> display-space so dots/outline ride with it.
 export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, onSelect, nodeRef }: Props) {
   const [image] = useImage(`/img/${a.name}/${a.head}?v=${encodeURIComponent(a.rev)}`);
+  // The edge-map overlay (green edges on transparency) rides on top under the mask view.
+  const [edgeImage] = useImage(a.edge ? `/mask/${a.name}?v=${encodeURIComponent(a.edge_rev)}` : "");
   const groupRef = useRef<Konva.Group>(null);
 
   useEffect(() => {
@@ -70,6 +72,9 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
       {/* hit area so clicks land even where the image is transparent */}
       <Rect width={dispW} height={dispH} />
       {showImg && image && <KImage image={image} width={dispW} height={dispH} listening={false} />}
+      {showMask && a.edge && edgeImage && (
+        <KImage image={edgeImage} width={dispW} height={dispH} listening={false} />
+      )}
       {showMask && a.outline.length >= 2 && (
         <Line
           points={a.outline.flatMap(([x, y]) => [x * s, y * s])}

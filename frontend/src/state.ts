@@ -20,6 +20,8 @@ export type Asset = {
   locked: boolean;
   dots: [number, number][];
   outline: [number, number][];
+  edge: boolean;          // an edge-map raster overlay (served at /mask/{name}) is present
+  edge_rev: string;       // its cache-buster (PNG mtime); "" when there's no overlay
   can_undo: boolean;
   can_redo: boolean;
   timeline: string[];

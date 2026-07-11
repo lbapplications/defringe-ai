@@ -4,7 +4,8 @@
     Color      colour parsing shared by the drawing tools         (utils)
     Transform  matte extraction + pixel cleanup                   key_background, trim_alpha,
                                                                   crop, defringe, upscale,
-                                                                  silhouette_mask, edge_detect
+                                                                  silhouette_mask, edge_detect,
+                                                                  matrix_sweep
     Shape      draw primitives + the anchor/box model             draw_shape, draw_line
     Annotate   seed dots burned into the pixels                   mark
     Geometry   dots -> outline -> matte (the seeded isolation)    convex_hull, hull_snap,

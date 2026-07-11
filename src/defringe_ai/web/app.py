@@ -40,6 +40,16 @@ DIST = os.path.join(WEBDIR, "dist")  # the built Vite app (frontend/ → here); 
 
 # --- state (board arrangement + workspace edit heads) ----------------------
 
+def _edge_rev(home: str, name: str) -> str:
+    """Cache-buster for an asset's edge overlay: the PNG mtime, or '' if there's none.
+    Included in the pushed state + signature so a re-run (which rewrites the same file)
+    still reaches the browser and busts the `<img>` cache."""
+    try:
+        return str(os.path.getmtime(os.path.join(home, name, "mask_edge.png")))
+    except OSError:
+        return ""
+
+
 def build_state(home: str) -> list[dict]:
     b = Board(home).sync()
     sel = b["selected"]
@@ -69,6 +79,8 @@ def build_state(home: str) -> list[dict]:
             "locked": bool(a.get("locked", False)),
             "dots": a.get("mask", {}).get("dots", []),
             "outline": a.get("mask", {}).get("outline", []),
+            "edge": bool(a.get("mask", {}).get("edge", False)),
+            "edge_rev": _edge_rev(home, name),
             "can_undo": _hist.can_undo, "can_redo": _hist.can_redo,
             "timeline": _hist.timeline(),
         })
@@ -78,7 +90,7 @@ def build_state(home: str) -> list[dict]:
 def _sig(state: list[dict]) -> str:
     return json.dumps([(a["name"], a["x"], a["y"], a["scale"], a["z"], a["rev"],
                         a["selected"], a["editing"], a["intent"],
-                        a["locked"], a["dots"], a["outline"],
+                        a["locked"], a["dots"], a["outline"], a["edge"], a["edge_rev"],
                         a["can_undo"], a["can_redo"]) for a in state])
 
 
@@ -233,6 +245,14 @@ def build_app(home: str) -> Starlette:
         Board(home).set_outline(name, Geometry.hull_snap(dots))
         return JSONResponse({"ok": True, "n": len(dots)})
 
+    async def mask_edge(request):
+        """Serve an asset's edge-map overlay PNG (green edges on transparency)."""
+        name = os.path.basename(request.path_params["name"])
+        path = os.path.join(home, name, "mask_edge.png")
+        if not os.path.exists(path):
+            return HTMLResponse("not found", status_code=404)
+        return FileResponse(path)
+
     async def image(request):
         name = os.path.basename(request.path_params["name"])
         idx = int(request.path_params["idx"])
@@ -261,6 +281,7 @@ def build_app(home: str) -> Starlette:
         Route("/api/history/goto", api_goto, methods=["POST"]),
         Route("/api/reset", api_reset, methods=["POST"]),
         Route("/img/{name}/{idx:int}", image),
+        Route("/mask/{name}", mask_edge),
     ]
     # the built Vite bundle references /assets/*; only mount when it exists so an
     # unbuilt checkout still boots (index() then shows the "run pnpm build" hint).

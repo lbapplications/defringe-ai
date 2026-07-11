@@ -131,6 +131,20 @@ def test_goto_and_reset_history(board):
     assert st["can_undo"] is False
 
 
+def test_set_edge_records_and_undoes(board):
+    b, name = board
+    b.sync()
+    b.set_edge(name, True)                                 # record=True → one timeline action
+    assert b.sync()["assets"][name]["mask"]["edge"] is True
+    b.undo(name)
+    assert b.sync()["assets"][name]["mask"]["edge"] is False
+    # a preview (record=False) flips the flag but adds no history
+    before = json.dumps(b.sync()["assets"][name].get("history"))
+    b.set_edge(name, True, record=False)
+    after = json.dumps(b.sync()["assets"][name].get("history"))
+    assert before == after and b.sync()["assets"][name]["mask"]["edge"] is True
+
+
 def test_mutations_on_unknown_asset_are_safe_noops(board):
     b, _ = board
     # every mutation must ignore a name it doesn't know, without raising
@@ -142,6 +156,7 @@ def test_mutations_on_unknown_asset_are_safe_noops(board):
         lambda: b.add_dot("ghost", 1, 1),
         lambda: b.clear_dots("ghost"),
         lambda: b.set_outline("ghost", [[0, 0], [1, 1], [2, 2]]),
+        lambda: b.set_edge("ghost", True),
         lambda: b.undo("ghost"),
         lambda: b.redo("ghost"),
         lambda: b.goto("ghost", 0),

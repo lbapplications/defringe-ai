@@ -33,6 +33,7 @@ def _ensure_layers(a: dict) -> dict:
     a.setdefault("mask", {})
     a["mask"].setdefault("dots", [])
     a["mask"].setdefault("outline", [])
+    a["mask"].setdefault("edge", False)      # an edge-map raster overlay (mask_edge.png) is present
     if not a.get("history") and all(k in a for k in ("x", "y", "scale")):
         a["history"] = History(_snapshot(a), "open").to_dict()
     return a
@@ -226,6 +227,20 @@ class Board:
             self._write(b)
         return b
 
+    def set_edge(self, name, on=True, record=True) -> dict:
+        """Flag that the asset carries an edge-map mask overlay — the raster itself is
+        written by the caller to ``<home>/<name>/mask_edge.png``. Recorded on the timeline
+        like ``connect`` so it undoes as one step; pass ``record=False`` for live previews
+        (e.g. the tune search) that shouldn't spam the timeline until they commit."""
+        b = self.sync()
+        if name in b["assets"]:
+            a = b["assets"][name]
+            _ensure_layers(a)["mask"]["edge"] = bool(on)
+            if record:
+                _commit(a, "edge → mask" if on else "clear edge")
+            self._write(b)
+        return b
+
     # --- per-image undo / redo (focus-aware, image-level) ------------------
 
     def _apply_pixel_head(self, name, a) -> None:
@@ -300,6 +315,11 @@ class Board:
             m = _ensure_layers(a)["mask"]
             m["dots"] = []
             m["outline"] = []
+            m["edge"] = False
+            try:                                        # drop the overlay raster too
+                os.remove(os.path.join(self.home, name, "mask_edge.png"))
+            except OSError:
+                pass
             a["history"] = History(_snapshot(a), "open").to_dict()
             self._write(b)
         return b

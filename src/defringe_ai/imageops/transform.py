@@ -167,6 +167,57 @@ class Transform:
         return out
 
     @staticmethod
+    def matrix_sweep(img: RGBA, color: str = "#35ff7d", threshold: int = 8,
+                     bold: int = 1, glow: float = 3.0,
+                     mode: str = "color", base: RGBA | None = None) -> RGBA:
+        """Sweep an image into a transparency-keyed line overlay: black drops out, edges show.
+
+        Copies the image into a fresh matrix (``* 1``), reads per-pixel brightness, sends
+        the black part to fully transparent alpha, and paints everything that survives —
+        optionally thickened into a **bold core** with a **soft glow** halo. The surviving
+        pixels are coloured by ``mode``:
+
+        * ``"color"``    — one fixed ``color`` (the vivid default).
+        * ``"white"``    — plain white lines.
+        * ``"negative"`` — each kept pixel becomes the photographic negative (``255 - rgb``)
+          of ``base`` at that spot, so the line always contrasts whatever sits under it.
+
+        Built to turn an edge map (white lines on black) into a mask overlay you lay over
+        the original image: the background vanishes, the edges stay.
+
+        Args:
+            img: Source RGBA — an edge map, or any light-on-dark signal.
+            color: Colour for ``mode="color"``.
+            threshold: Brightness (0..255) at/below which a pixel is black -> transparent.
+            bold: 3x3 dilations of the kept pixels (0 = crisp 1px lines).
+            glow: Gaussian sigma of the halo bled around the core (0 disables the glow).
+            mode: ``"color"`` | ``"white"`` | ``"negative"`` — how kept pixels are coloured.
+            base: The image the negative is taken from (defaults to ``img``); used only by
+                ``mode="negative"`` — pass the ORIGINAL so lines invert what's beneath them.
+
+        Returns:
+            A new RGBA: coloured per ``mode`` over the kept lines (opaque core fading through
+            the glow), fully transparent where the source was black.
+        """
+        work = img[..., :3].astype(np.float32) * 1.0        # the whole image into a separate matrix
+        lum = _luminance(work)                               # (H, W) brightness 0..255
+        core = ((lum > threshold).astype(np.uint8) * 255)    # black -> transparent; the rest kept
+        if bold > 0:
+            core = cv2.dilate(core, np.ones((3, 3), np.uint8), iterations=bold)   # thicken to a bold core
+        halo = cv2.GaussianBlur(core, (0, 0), sigmaX=glow) if glow > 0 else np.zeros_like(core)
+        alpha = np.maximum(core.astype(np.float32), halo.astype(np.float32) * 0.7)  # opaque core + soft halo
+        out = np.zeros_like(img)
+        if mode == "negative":
+            src = (img if base is None else base)[..., :3].astype(np.int16)
+            out[..., :3] = (255 - src).astype(np.uint8)      # invert whatever the line sits over
+        elif mode == "white":
+            out[..., :3] = 255
+        else:
+            out[..., :3] = Color.parse_rgb(color)[:3].astype(np.float32)
+        out[..., 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+        return out
+
+    @staticmethod
     def edge_detect(img: RGBA, lo: int = 100, hi: int = 200) -> RGBA:
         """Compute an edge map via the Canny algorithm (white edges on opaque black).
 

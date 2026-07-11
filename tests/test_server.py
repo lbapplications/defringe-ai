@@ -77,11 +77,15 @@ def test_draw_shape_gate_and_geometry(app):
 
 # --- derive: edge_detect + adaptive edge_detect_tune -----------------------
 
-def test_edge_detect_in_place_and_undoable(app):
+def test_edge_detect_makes_a_mask_overlay(app):
+    from defringe_ai.board import Board
+
     st = app.edge_detect(lo=50, hi=150)
-    assert st["chain"][-1] == "edge_detect" and st["head"] == 1
-    app.undo()                                  # restores the original
-    assert Workspace.active(app.HOME).status()["head"] == 0
+    assert st["head"] == 0 and st["chain"] == ["open"]        # image untouched — original stays HEAD
+    assert os.path.exists(os.path.join(app.HOME, "shark", "mask_edge.png"))
+    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is True
+    Board(app.HOME).undo("shark")                            # image-level undo clears the overlay
+    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is False
 
 
 def test_edge_detect_no_workspace_raises(srv):
@@ -90,11 +94,14 @@ def test_edge_detect_no_workspace_raises(srv):
 
 
 def test_edge_detect_tune_good_immediately(app):
+    from defringe_ai.board import Board
+
     start = app.edge_detect_tune()
     assert start.done is False and start.probe == 1
     done = app.edge_detect_tune(verdict="good")
     assert done.done is True
-    assert Workspace.active(app.HOME).status()["chain"][-1] == "edge_detect"
+    assert Workspace.active(app.HOME).status()["head"] == 0          # image untouched
+    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is True
 
 
 def test_edge_detect_tune_two_more_converges(app):
@@ -164,7 +171,7 @@ def test_status_collapse_move_select_export(app, tmp_path):
 
 
 def test_redo_after_undo(app):
-    app.edge_detect(lo=50, hi=150)
+    app.edit("mark it"); app.mark([[5, 5]]); app.commit()   # a real pixel step to undo/redo
     app.undo()
     app.redo()
     assert app.status()["head"] == 1
@@ -234,7 +241,9 @@ def test_cli_shape_and_line_and_edge_detect(srv, monkeypatch, asset_png):
     _run(srv, monkeypatch, ["line", "0", "0", "9", "9", "a"])
     _run(srv, monkeypatch, ["commit", "a"])
     _run(srv, monkeypatch, ["edge_detect", "a"])
-    assert Workspace.resolve("a", srv.HOME).status()["chain"][-1] == "edge_detect"
+    from defringe_ai.board import Board
+    assert Board(srv.HOME).sync()["assets"]["a"]["mask"]["edge"] is True   # overlay, not a pixel step
+    assert Workspace.resolve("a", srv.HOME).status()["chain"][-1] == "draw_line"
 
 
 def test_cli_collapse_export(srv, monkeypatch, asset_png, tmp_path):
