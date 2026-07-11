@@ -15,6 +15,7 @@ inputs/*
 workspace/*
 !workspace/.gitkeep
 out/
+logs/
 *.tmp.png
 
 # Frontend (Vite/React). Build output is generated into the Python package's web/dist by

@@ -88,6 +88,28 @@ cd frontend && pnpm install && pnpm build      # → src/defringe_ai/web/dist (s
 pnpm dev                                        # or: live HMR on :47825, proxying to the server
 ```
 
+## Dev — one command
+
+`scripts/dev.sh` runs the whole stack with a **clean, graceful shutdown**: Ctrl-C stops
+everything and frees the ports, so the next run always rebinds cleanly (no orphaned server
+left behind). It streams the server log into the terminal.
+
+```bash
+./scripts/dev.sh           # build the frontend, run the server (serves web/dist) at :47824
+./scripts/dev.sh --dev     # run the server + Vite dev server (HMR) on :47825 — iterate the UI
+./scripts/dev.sh --server  # server only, skip the frontend build
+```
+
+| Want to… | Use |
+|---|---|
+| just look / demo | `./scripts/dev.sh` (built UI at :47824) |
+| iterate on the React UI | `./scripts/dev.sh --dev`, open **:47825** (instant HMR) |
+| work on the Python side only | `./scripts/dev.sh --server` |
+
+Logs land in `logs/` (gitignored). Ports: **47823** MCP, **47824** edit screen, **47825**
+Vite dev. Changing any of this (a port, a flag, the run flow) means updating this section —
+see `.claude/rules/dev.md`.
+
 Ports default to the **uncommon** `47823` (MCP) / `47824` (preview) and **auto-bump to
 the next free port** if taken — so it runs beside whatever an artist already has open.
 `--preview` serves a live view of the edit chain with `HEAD` marked (auto-refresh,

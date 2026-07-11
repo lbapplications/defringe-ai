@@ -5,6 +5,10 @@ debugging why a change didn't show up.
 
 ## Run
 
+**Preferred: `./scripts/dev.sh`** — one entry point, streams the log, and shuts down
+cleanly (Ctrl-C frees the ports). `--dev` adds Vite HMR, `--server` skips the build. See
+[dev](dev.md). The raw command below is the manual equivalent (what the script runs):
+
 ```bash
 cd /home/kerna/defringe-ai
 DEFRINGE_HOME=$PWD/workspace uv run defringe-ai serve --http --preview

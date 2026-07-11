@@ -32,6 +32,7 @@ that match what you're about to do:
 | [coordinates](.claude/rules/coordinates.md) | do any geometry / pixel-indexing / dot / drawing work (the `arr[y,x]` trap) |
 | [undo](.claude/rules/undo.md) | touch undo, `history.py`, or the board mask |
 | [server-ops](.claude/rules/server-ops.md) | start / stop / restart the live server, or debug a change not showing up |
+| [dev](.claude/rules/dev.md) | change how the project is run/developed — `scripts/dev.sh`, ports, build/run flow (keep the README dev section in sync) |
 
 When a task spans concerns, read each matching rule — they're written to compose, not
 overlap. New guidance goes into the single rule it belongs to (or a new rule), keeping
