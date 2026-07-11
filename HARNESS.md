@@ -26,7 +26,7 @@ that match what you're about to do:
 
 | Rule | Read it when you're about to… |
 |---|---|
-| [repo-intent](harness_driver/repo-intent.md) | branch, commit, open a PR, or add any structure/ceremony (spoiler: master-only, no PRs, edit in place) |
+| [repo-intent](harness_driver/repo-intent.md) | branch, commit, open a PR, or add any structure/ceremony (spoiler: default straight-to-`master`; a PR, when asked, runs through the `make check` soft-lint gate — no *other* ceremony) |
 | [architecture](harness_driver/architecture.md) | navigate or add code — the layers and what stays orthogonal to what |
 | [frontend](harness_driver/frontend.md) | touch `frontend/` — the Vite/React/Konva edit screen, its taxonomy, and how it's built/served |
 | [tools](harness_driver/tools.md) | add or edit an image tool — a tool isn't real until it's MCP-registered; NumPy/Pydantic/README standards + the gate |
