@@ -4,7 +4,7 @@
 
 | Lane | What it is | Status |
 |---|---|---|
-| **deterministic** | executable/mechanical checks (code that passes or fails) | not wired yet |
+| **deterministic** | `hard_lint/` — executable/mechanical checks (code that passes or fails) | wired: `hard_lint/check.py` |
 | **non-deterministic** | **this** — an *instruction set* an agent follows to judge a PR against the rules | instructions here; driver not wired yet |
 
 `soft_lint` is the **non-deterministic** lane: a judgment-based review, **not a program**.
