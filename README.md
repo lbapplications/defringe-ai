@@ -163,7 +163,13 @@ touched last.
 | **`defringe`** ⭐ | erode the alpha edge N px to drop the matte fringe, then **burn** the remaining edge pixels so a white/halo rim melts into a dark background |
 | `upscale` | lanczos3 resample + gentle sharpen (holds linework; adds no real detail) |
 | `silhouette_mask` | emit just the alpha shape for CSS `mask-image` tricks |
-| `canny` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal* |
+
+**Derive** — extract a *signal* from the image (self-contained — no edit session; **undo restores the original**):
+
+| Tool | Does |
+|---|---|
+| `canny` | `cv2.Canny` edge map (white-on-black), `lo`/`hi` hysteresis — the edge *signal*, applied in place. Records an image-level step, so **hitting back/undo restores the original image** |
+| `canny_tune` ⭐ | **adaptive** Canny — find the threshold by *looking*, not guessing. A binary search baked into the tool: it renders the mid-range edges and asks; you reply `reduce` / `more` / `good`; it halves the range and re-renders, converging in ≤3 probes (or 2 `more`s), then commits. The repo's loop in one call — the tool owns the search, the agent owns the judgement |
 
 **Annotate & shapes** — for flagging locations and drawing guides (burned into pixels):
 
@@ -193,7 +199,9 @@ seeds, looks at the cut, and nudges. The edit screen exposes the same flow as to
 buttons (Dot → Connect → Cut out).
 
 **Workspace / board controls:** `undo`, `redo` (per-image, two-level — see below),
-`status`, `collapse`, `export`, `move` (place an asset on the canvas), `list_workspaces`.
+`status`, `collapse`, `export`, `move` (place an asset on the canvas), `select` (make an
+asset the active target + raise it), `list_workspaces`, `list_shapes`, `taxonomy` (the tool
+groups + which are gated).
 
 ### The edit screen
 

@@ -133,6 +133,26 @@ class Workspace:
         self._write(m)
         return self.status()
 
+    def reset(self) -> dict:
+        """Revert HEAD to the original opening image (step 0), keeping the chain redoable."""
+        m = self._read()
+        m["head"] = 0
+        self._write(m)
+        return self.status()
+
+    def head(self) -> int:
+        """The current HEAD step index — the board reads this to snapshot pixel state."""
+        return int(self._read()["head"])
+
+    def set_head(self, idx: int) -> dict:
+        """Move HEAD to a specific step (clamped) without adding a snapshot. Powers
+        image-level undo/redo/goto: the board's per-image history records a step's HEAD
+        as part of its memento and moves the pixels back here when you revert."""
+        m = self._read()
+        m["head"] = max(0, min(int(idx), len(m["steps"]) - 1))
+        self._write(m)
+        return self.status()
+
     def collapse(self) -> dict:
         """Verify: flatten the chain to HEAD as the lone base, discard the rest."""
         m = self._read()
@@ -184,6 +204,24 @@ class Workspace:
 
     def in_session(self) -> bool:
         return bool(self._read().get("session", {}).get("active"))
+
+    # --- scratch (namespaced per-asset state for multi-step tools) ----------
+
+    def scratch_get(self, key: str, default=None):
+        """Read a tool's saved scratch state (e.g. an in-progress binary search)."""
+        return self._read().get("scratch", {}).get(key, default)
+
+    def scratch_set(self, key: str, value: dict) -> None:
+        """Persist a tool's scratch state in the manifest, namespaced by `key`."""
+        m = self._read()
+        m.setdefault("scratch", {})[key] = value
+        self._write(m)
+
+    def scratch_clear(self, key: str) -> None:
+        """Drop a tool's scratch state (e.g. when its multi-step run finishes)."""
+        m = self._read()
+        m.get("scratch", {}).pop(key, None)
+        self._write(m)
 
     def export(self, dest: str) -> dict:
         """Write the current (HEAD) image out to an arbitrary path — the deliverable."""

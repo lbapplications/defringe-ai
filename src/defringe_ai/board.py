@@ -40,16 +40,35 @@ def _ensure_layers(a: dict) -> dict:
 
 # --- per-image undo: the asset's board state <-> a History memento ---------
 
-# The undoable slice of an asset's board state (z-order/selection are global, not here).
+# The undoable slice of an asset's board state, PER IMAGE:
+#   mask + lock      the invisible annotation layer
+#   pixel_head       the workspace edit-chain HEAD → makes undo work at the IMAGE level:
+#                    a committed transform (isolate, defringe, …) is captured here, so
+#                    reverting a step moves the actual pixels back, not just the mask.
+# Position/scale and z-order/selection are deliberately NOT tracked — moves aren't history
+# we care to keep, so undo/goto never move an image, only revert its edits.
 def _snapshot(a: dict) -> dict:
-    return {"mask": copy.deepcopy(a["mask"]), "locked": a["locked"],
-            "x": a["x"], "y": a["y"], "scale": a["scale"]}
+    return {
+        "mask": copy.deepcopy(a["mask"]),
+        "locked": a["locked"],
+        "pixel_head": int(a.get("pixel_head", 0)),
+    }
 
 
 def _restore(a: dict, snap: dict) -> None:
     a["mask"] = copy.deepcopy(snap["mask"])
-    a["locked"], a["x"], a["y"], a["scale"] = snap["locked"], snap["x"], snap["y"], snap["scale"]
+    a["locked"] = snap["locked"]
+    if "pixel_head" in snap:
+        a["pixel_head"] = int(snap["pixel_head"])
     _ensure_layers(a)
+
+
+def _current_pixel_head(home: str, name: str) -> int:
+    """The live workspace HEAD for an asset (0 if it has no workspace yet)."""
+    try:
+        return Workspace(os.path.join(home, name)).head()
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        return 0
 
 
 def _history(a: dict) -> History:
@@ -121,7 +140,8 @@ class Board:
                     b["order"].append(name)
         b["order"] = [n for n in b["order"] if n in names]
         b["assets"] = {n: v for n, v in b["assets"].items() if n in names}
-        for a in b["assets"].values():                 # backfill lock + mask on every asset
+        for nm, a in b["assets"].items():               # backfill lock + mask + pixel head
+            a["pixel_head"] = _current_pixel_head(self.home, nm)
             _ensure_layers(a)
         if b["selected"] not in names:
             b["selected"] = b["order"][-1] if b["order"] else None
@@ -141,8 +161,7 @@ class Board:
             a["y"] = int(y)
         if scale is not None:
             a["scale"] = round(max(0.1, min(6.0, float(scale))), 3)
-        _commit(a, "resize" if scale is not None else "move")
-        self._write(b)
+        self._write(b)                                  # moves/resizes are NOT recorded
         return b
 
     def bring_to_front(self, name) -> dict:
@@ -207,7 +226,32 @@ class Board:
             self._write(b)
         return b
 
-    # --- per-image undo / redo (focus-aware) -------------------------------
+    # --- per-image undo / redo (focus-aware, image-level) ------------------
+
+    def _apply_pixel_head(self, name, a) -> None:
+        """Move the asset's workspace HEAD to the pixel_head just restored from a memento,
+        so reverting a step moves the actual image — not only its mask."""
+        ph = a.get("pixel_head")
+        if ph is None:
+            return
+        try:
+            Workspace(os.path.join(self.home, name)).set_head(int(ph))
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            pass
+
+    def record_pixel_edit(self, name, label) -> dict:
+        """Record a committed *pixel* edit on the asset's per-image timeline. Called right
+        after a transform commits (isolate, defringe, …): captures the new workspace HEAD
+        as a memento so image-level undo can revert the whole image. No-op if the HEAD
+        didn't actually move (an empty/idempotent commit adds no history)."""
+        b = self.sync()
+        if name in b["assets"]:
+            a = b["assets"][name]
+            h = _history(a)
+            if h.state.get("pixel_head") != a.get("pixel_head"):
+                _commit(a, label)
+                self._write(b)
+        return b
 
     def undo(self, name) -> dict:
         b = self.sync()
@@ -216,6 +260,7 @@ class Board:
             h = _history(a)
             if h.undo():
                 _restore(a, h.state)
+                self._apply_pixel_head(name, a)
             a["history"] = h.to_dict()
             self._write(b)
         return b
@@ -227,7 +272,35 @@ class Board:
             h = _history(a)
             if h.redo():
                 _restore(a, h.state)
+                self._apply_pixel_head(name, a)
             a["history"] = h.to_dict()
+            self._write(b)
+        return b
+
+    def goto(self, name, index) -> dict:
+        """Jump an asset to a specific point on its history timeline (dropdown select)."""
+        b = self.sync()
+        if name in b["assets"]:
+            a = b["assets"][name]
+            h = _history(a)
+            if h.goto(index):
+                _restore(a, h.state)
+                self._apply_pixel_head(name, a)
+            a["history"] = h.to_dict()
+            self._write(b)
+        return b
+
+    def reset_history(self, name) -> dict:
+        """Reset an asset back to a clean slate: wipe its invisible mask layer (dots +
+        outline) and erase its per-image history, re-seeding a single 'open' action from
+        the now-clean state — so a reset leaves no stale mask *or* timeline steps."""
+        b = self.sync()
+        if name in b["assets"]:
+            a = b["assets"][name]
+            m = _ensure_layers(a)["mask"]
+            m["dots"] = []
+            m["outline"] = []
+            a["history"] = History(_snapshot(a), "open").to_dict()
             self._write(b)
         return b
 

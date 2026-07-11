@@ -188,6 +188,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
         ws.begin_edit("isolate (fill mask)")
         ws.apply("isolate", Geometry.fill_polygon_alpha, {"polygon": outline})
         ws.commit_edit()
+        Board(home).record_pixel_edit(name, "isolate")   # image-level undo step
         return JSONResponse({"ok": True})
 
     async def api_undo(request):
@@ -198,6 +199,22 @@ def serve_preview(home: str, host: str, port: int) -> None:
     async def api_redo(request):
         b = await request.json()
         Board(home).redo(os.path.basename(str(b.get("name", ""))))
+        return JSONResponse({"ok": True})
+
+    async def api_goto(request):
+        """Jump the asset to a chosen point on its history timeline (dropdown select)."""
+        b = await request.json()
+        name = os.path.basename(str(b.get("name", "")))
+        Board(home).goto(name, int(b.get("index", 0)))
+        return JSONResponse({"ok": True})
+
+    async def api_reset(request):
+        """Reset an asset: revert its pixels to the original open image, wipe its invisible
+        mask layer (dots + outline), AND erase its per-image history — a clean slate."""
+        b = await request.json()
+        name = os.path.basename(str(b.get("name", "")))
+        Workspace.resolve(name, home).reset()
+        Board(home).reset_history(name)
         return JSONResponse({"ok": True})
 
     async def api_connect(request):
@@ -237,6 +254,8 @@ def serve_preview(home: str, host: str, port: int) -> None:
         Route("/api/isolate", api_isolate, methods=["POST"]),
         Route("/api/undo", api_undo, methods=["POST"]),
         Route("/api/redo", api_redo, methods=["POST"]),
+        Route("/api/history/goto", api_goto, methods=["POST"]),
+        Route("/api/reset", api_reset, methods=["POST"]),
         Route("/img/{name}/{idx:int}", image),
     ]
     # the built Vite bundle references /assets/*; only mount when it exists so an

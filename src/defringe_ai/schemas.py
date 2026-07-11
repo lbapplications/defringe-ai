@@ -29,3 +29,23 @@ class IsolateResult(BaseModel):
     width: int = Field(description="Current image width in pixels.")
     height: int = Field(description="Current image height in pixels.")
     chain: list[str] = Field(description="The ordered op names in the edit chain.")
+
+
+class CannyTuneResult(BaseModel):
+    """One step of the agent-in-the-loop Canny threshold search (binary search over the
+    hysteresis level). While `done` is False, LOOK at `current`, judge it, and call
+    `canny_tune(verdict=...)` again; when `done` is True the winning edge map is committed."""
+
+    workspace: str = Field(description="The asset being tuned.")
+    done: bool = Field(description="True once the search converged and the edge map is committed (undo restores the original).")
+    probe: int = Field(description="Which probe this is (1-based); the search runs at most 3.")
+    lo: int = Field(description="Low hysteresis threshold used for this candidate.")
+    hi: int = Field(description="High hysteresis threshold used for this candidate.")
+    bracket: list[int] = Field(description="The current search range [min, max] the level is being bisected within.")
+    nos: int = Field(description="Count of 'more' verdicts so far — the search also stops at 2.")
+    question: str = Field(description="What to judge about `current` before the next verdict (empty when done).")
+    current: str = Field(description="Path to the candidate edge map to LOOK at (or the committed result when done).")
+    head: int = Field(description="Index of the current step in the edit chain.")
+    steps: int = Field(description="Total steps in the edit chain.")
+    width: int = Field(description="Current image width in pixels.")
+    height: int = Field(description="Current image height in pixels.")

@@ -25,6 +25,8 @@ export default function Toolbox({
   const a = assets.find((x) => x.selected) || null;
   const dots = a ? a.dots.length : 0;
   const act = (url: string) => a && post(url, { name: a.name });
+  const timeline = a?.timeline || [];
+  const headIdx = Math.max(0, timeline.findIndex((t) => t.startsWith("* ")));
 
   return (
     <aside id="tools">
@@ -72,14 +74,23 @@ export default function Toolbox({
               ↷ Redo
             </button>
           </div>
-          <div className="timeline">
-            {(a?.timeline || []).map((t, i) => {
-              const cur = t.startsWith("* ");
-              const foc = t.startsWith("~ ");
-              const label = cur || foc ? t.slice(2) : t;
-              return <div key={i} className={"tl-row" + (cur ? " cur" : "") + (foc ? " foc" : "")}>{label}</div>;
-            })}
-          </div>
+          <select
+            className="history-select"
+            disabled={!a || timeline.length === 0}
+            value={headIdx}
+            onChange={(e) => a && post("/api/history/goto", { name: a.name, index: Number(e.target.value) })}
+          >
+            {timeline.map((t, i) =>
+              t.startsWith("~ ") ? null : (
+                <option key={i} value={i}>
+                  {i}. {t.startsWith("* ") ? t.slice(2) : t}
+                </option>
+              ),
+            )}
+          </select>
+          <button className="wide-btn" disabled={!a} onClick={() => act("/api/reset")} title="revert to the original image and wipe this image's history">
+            ⟲ Reset image
+          </button>
         </Group>
 
         <Group label="Mask">

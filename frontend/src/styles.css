@@ -42,10 +42,11 @@ header .hint { color: #666; font-size: 11px; margin-left: auto; }
 
 .sel-name { font-size: 12px; color: #9ad; word-break: break-all; }
 .muted { font-size: 11px; color: #777; }
-.timeline { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; max-height: 180px; overflow-y: auto; }
-.tl-row { font-size: 11px; color: #777; padding: 2px 7px; border-left: 2px solid #2a2a2e; }
-.tl-row.cur { color: #cfefff; border-left-color: #6cf; background: #16323f66; }
-.tl-row.foc { color: #ffdf9e; border-left-color: #f5a623; font-style: italic; }
+.history-select {
+  width: 100%; padding: 6px 8px; font: inherit; color: #ddd; cursor: pointer;
+  background: #1b1b20; border: 1px solid #2c2c33; border-radius: 6px;
+}
+.history-select:disabled { opacity: .4; cursor: default; }
 
 .stage-wrap {
   position: fixed; top: var(--header-h); left: var(--tools-w); right: 0; bottom: 0;

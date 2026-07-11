@@ -158,6 +158,23 @@ class History:
         self._head += 1
         return True
 
+    def goto(self, index: int) -> bool:
+        """Jump the committed head straight to `index` (ends any open focus). Powers a
+        selectable history dropdown. No-op if the index is out of range or already current.
+
+        Args:
+            index: The 0-based action to make current; clamped to the timeline bounds.
+
+        Returns:
+            True if the head moved (state changed), False otherwise.
+        """
+        self.end_focus()
+        index = max(0, min(int(index), len(self._actions) - 1))
+        if index == self._head:
+            return False
+        self._head = index
+        return True
+
     # --- persistence -------------------------------------------------------
 
     def to_dict(self) -> dict:
