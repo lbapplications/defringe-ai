@@ -13,7 +13,7 @@
 Each class is a stateless namespace of @staticmethods over RGBA (H,W,4) uint8 arrays. The
 sets are independent: tool classes depend only on `utils`, never on each other (Geometry
 doesn't even touch Color). Add a new tool to the ONE class whose idea it fits — see
-`.claude/rules/tools.md`.
+`harness_driver/tools.md`.
 """
 
 from .utils import RGBA, Color, Io

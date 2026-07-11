@@ -108,7 +108,7 @@ left behind). It streams the server log into the terminal.
 
 Logs land in `logs/` (gitignored). Ports: **47823** MCP, **47824** edit screen, **47825**
 Vite dev. Changing any of this (a port, a flag, the run flow) means updating this section —
-see `.claude/rules/dev.md`.
+see `harness_driver/dev.md`.
 
 Ports default to the **uncommon** `47823` (MCP) / `47824` (preview) and **auto-bump to
 the next free port** if taken — so it runs beside whatever an artist already has open.
@@ -124,6 +124,24 @@ dark+light checkerboard to judge alpha edges).
   }
 }
 ```
+
+## Setup — onboarding an agent (any provider)
+
+The working rules for this repo are **provider-agnostic**: they live in `harness_driver/`
+(one concern per file) and are mapped by **[HARNESS.md](HARNESS.md)**, which is the
+authoritative guidance any AI agent should follow. To point an agent at them:
+
+- **Claude Code** — nothing to do. `CLAUDE.md` is auto-loaded and **chains** to HARNESS.md
+  (`CLAUDE.md` → `HARNESS.md` → the `harness_driver/*.md` rule in scope). `CLAUDE.md` holds
+  only personal prefs; the rules are in the harness.
+- **Any other provider** — add **HARNESS.md** (and the `harness_driver/` rules it maps) to
+  your agent's system/context/instructions, or create a thin entry file that says *"read
+  HARNESS.md"*. Keep provider-specific prefs in that entry file; **never copy rules out of
+  `harness_driver/`** — it's the single source.
+
+**The chain (reading order):** personal/provider prefs → **HARNESS.md** → the
+`harness_driver/*.md` rule for the task at hand. Changing this onboarding flow means
+updating this section — see `harness_driver/onboarding.md`.
 
 ## What this is & how to use it — the tools
 
@@ -193,7 +211,7 @@ and resize use Konva's native transform handles. A **left toolbox** drives the i
   placing them; any other action collapses the bundle. A live timeline shows the history.
 
 The UI is orthogonal to the backend — it talks to the server only over `/api` + `/img` +
-SSE. Its structure and conventions live in `.claude/rules/frontend.md`.
+SSE. Its structure and conventions live in `harness_driver/frontend.md`.
 
 Assets are movable by the agent (the `move` tool) and by you (drag — the drop persists).
 `/chains` shows the per-asset reversible pixel edit history.

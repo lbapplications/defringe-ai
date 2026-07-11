@@ -1,6 +1,6 @@
 """Shared concepts every tool set leans on — the ``utils`` home.
 
-The orthogonalization standard (see ``.claude/rules/orthogonalization.md``): a tool class
+The orthogonalization standard (see ``harness_driver/orthogonalization.md``): a tool class
 depends on ``utils`` and nothing else — **never on another tool class**. The moment a
 concept is needed in a second area, it moves *here*. Today that's RGBA I/O (``Io``) and
 colour parsing (``Color``); numeric helpers stay local to their one class until a second
@@ -8,7 +8,7 @@ caller appears.
 
 Everything is NumPy-first: pixels are ``(H, W, 4)`` uint8 arrays and math is vectorised
 (no per-pixel Python loops). Native-Python loops over pixels/points are a smell — see the
-NumPy standard in ``.claude/rules/tools.md``.
+NumPy standard in ``harness_driver/tools.md``.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 All shapes share one spatial model: an ``(x, y)`` anchor point + a ``(width, height)``
 bounding box + an ``anchor`` naming which part of the box lands at ``(x, y)``. Coords are
-pixels, top-left origin, x->right, y->down (see ``.claude/rules/coordinates.md``). cv2
+pixels, top-left origin, x->right, y->down (see ``harness_driver/coordinates.md``). cv2
 does the rasterising; coordinate math is vectorised NumPy.
 """
 

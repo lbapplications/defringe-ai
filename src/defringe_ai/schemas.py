@@ -1,6 +1,6 @@
 """Pydantic result models — the typed-return standard for MCP tools.
 
-The standard (see ``.claude/rules/tools.md``): a tool that mutates state returns a Pydantic
+The standard (see ``harness_driver/tools.md``): a tool that mutates state returns a Pydantic
 model, not a bare dict, so the shape is declared, validated, and self-documenting to the
 agent. New tools follow this; older dict-returning tools migrate opportunistically.
 """
