@@ -10,6 +10,7 @@
 #   ./scripts/dev.sh           # build the frontend, run the server (serves web/dist)
 #   ./scripts/dev.sh --dev     # run the server + Vite dev server (HMR) on :47825
 #   ./scripts/dev.sh --server  # server only — skip the frontend build
+#   ./scripts/dev.sh --watch   # live testing: Vite HMR + auto-restart the server on .py edits
 set -euo pipefail
 
 # Anchor to the repo root (this script lives in <root>/scripts) so uv, workspace/,
@@ -26,15 +27,20 @@ WEB_LOG="$LOG_DIR/web.log"
 # The server keys its on-disk state off DEFRINGE_HOME; pin it to the repo's workspace/.
 export DEFRINGE_HOME="$ROOT/workspace"
 
-MODE=default   # default (build + serve dist) | dev (server + Vite HMR) | server (no build)
+MODE=default   # default (build+dist) | dev (server+Vite HMR) | watch (dev+server auto-restart) | server (no build)
 for arg in "$@"; do
   case "$arg" in
     --dev)     MODE=dev ;;
     --server)  MODE=server ;;
+    --watch)   MODE=watch ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
-    *) echo "usage: $0 [--dev|--server]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--dev|--server|--watch]" >&2; exit 2 ;;
   esac
 done
+
+# Vite HMR runs for the interactive modes (dev + watch); watch additionally auto-restarts
+# the Python server on .py edits (see the server section below).
+if [ "$MODE" = dev ] || [ "$MODE" = watch ]; then VITE=1; else VITE=0; fi
 
 mkdir -p "$LOG_DIR"
 
@@ -77,7 +83,7 @@ cleanup() {
   done
   free_port "$MCP_PORT" MCP
   free_port "$PREVIEW_PORT" "edit screen"
-  [ "$MODE" = dev ] && free_port "$VITE_PORT" "Vite dev"
+  [ "$VITE" = 1 ] && free_port "$VITE_PORT" "Vite dev"
   echo "» stopped — ports freed."
   exit 0
 }
@@ -97,13 +103,23 @@ fi
 # --- server (Python: MCP + preview) -----------------------------------------
 free_port "$MCP_PORT" MCP
 free_port "$PREVIEW_PORT" "edit screen"
-echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit)  (log: $SERVER_LOG)"
 : > "$SERVER_LOG"
-uv run defringe-ai serve --http --preview >>"$SERVER_LOG" 2>&1 &
+if [ "$MODE" = watch ]; then
+  echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit) — auto-restart on .py edits  (log: $SERVER_LOG)"
+  # watchfiles reruns the whole `serve` process on any Python change under src/. It
+  # kills-and-waits (SIGKILL after --sigint-timeout) before relaunching, so the server
+  # fully releases its sockets and _free_port rebinds :47823/:47824 every time — the edit
+  # screen never drifts to another port. Frontend edits are handled by Vite HMR, not this.
+  uv run watchfiles --target-type command --filter python --sigint-timeout 3 \
+    "uv run defringe-ai serve --http --preview" src >>"$SERVER_LOG" 2>&1 &
+else
+  echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit)  (log: $SERVER_LOG)"
+  uv run defringe-ai serve --http --preview >>"$SERVER_LOG" 2>&1 &
+fi
 PIDS+=("$!")
 
-# --- Vite dev server (HMR) in --dev -----------------------------------------
-if [ "$MODE" = dev ]; then
+# --- Vite dev server (HMR) in --dev / --watch -------------------------------
+if [ "$VITE" = 1 ]; then
   free_port "$VITE_PORT" "Vite dev"
   echo "» starting Vite dev on :$VITE_PORT (HMR, proxies /api + /img → :$PREVIEW_PORT)  (log: $WEB_LOG)"
   : > "$WEB_LOG"
@@ -114,8 +130,8 @@ fi
 echo
 echo "──────────────────────────────────────────────────────────"
 echo "  MCP         : http://localhost:$MCP_PORT/mcp"
-if [ "$MODE" = dev ]; then
-  echo "  edit (HMR)  : http://localhost:$VITE_PORT"
+if [ "$VITE" = 1 ]; then
+  echo "  edit (HMR)  : http://localhost:$VITE_PORT   ← test here (live frontend + backend)"
   echo "  edit (dist) : http://localhost:$PREVIEW_PORT"
 else
   echo "  edit screen : http://localhost:$PREVIEW_PORT"
@@ -127,7 +143,7 @@ echo
 # Stream the log(s) with a prefix so they're distinguishable in one terminal.
 # (TAILS is declared up top so an early Ctrl-C during build can still reap them.)
 tail -n +1 -F "$SERVER_LOG" | sed -u 's/^/[server] /' & TAILS+=("$!")
-[ "$MODE" = dev ] && { tail -n +1 -F "$WEB_LOG" | sed -u 's/^/[web]    /' & TAILS+=("$!"); }
+[ "$VITE" = 1 ] && { tail -n +1 -F "$WEB_LOG" | sed -u 's/^/[web]    /' & TAILS+=("$!"); }
 
 # Wait on the server(s); when one dies (or Ctrl-C), cleanup runs.
 wait "${PIDS[@]}"
