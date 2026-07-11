@@ -18,6 +18,7 @@ import json
 import os
 
 from .history import History
+from .registry import Registry
 from .workspace import Workspace
 
 
@@ -73,7 +74,7 @@ def _restore(a: dict, snap: dict) -> None:
 def _current_pixel_head(home: str, name: str) -> int:
     """The live workspace HEAD for an asset (0 if it has no workspace yet)."""
     try:
-        return Workspace(os.path.join(home, name)).head()
+        return Workspace.locate(name, home).head()
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return 0
 
@@ -81,7 +82,7 @@ def _current_pixel_head(home: str, name: str) -> int:
 def _current_overlay_head(home: str, name: str) -> int:
     """The live workspace overlay HEAD for an asset (-1 if it has none)."""
     try:
-        return Workspace(os.path.join(home, name)).overlay_head()
+        return Workspace.locate(name, home).overlay_head()
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         return -1
 
@@ -107,13 +108,17 @@ def _step(a: dict, label: str) -> None:
 
 
 def _seed_from_manifest(home: str, name: str) -> dict | None:
-    """Migrate an asset's placement from an older workspace manifest, if it has one."""
+    """Migrate an asset's placement from an older workspace manifest, if it has one.
+
+    Legacy path only: current `Workspace.open_asset` manifests carry no `canvas` block, so this
+    returns None for Phase-1 assets and `sync` falls back to a staggered slot. Kept for homes
+    seeded by a pre-canvas-in-board version whose manifests still hold `{canvas:{x,y,scale}}`."""
     try:
-        with open(os.path.join(home, name, "manifest.json")) as f:
+        with open(os.path.join(Registry(home).dir_by_name(name), "manifest.json")) as f:
             c = json.load(f).get("canvas")
         if c:
             return {"x": c.get("x", 40), "y": c.get("y", 40), "scale": c.get("scale", 1.0)}
-    except (FileNotFoundError, json.JSONDecodeError):
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
         pass
     return None
 
@@ -146,6 +151,7 @@ class Board:
     def sync(self) -> dict:
         """Reconcile the board with the workspaces that actually exist: add new assets
         (seeding placement from an old manifest or a staggered slot), drop stale ones."""
+        Registry(self.home).adopt_legacy()             # pull any pre-identity flat dirs into the table
         names = Workspace.list_all(self.home)
         b = self._read()
         for name in names:
@@ -194,6 +200,21 @@ class Board:
         if name in b["assets"]:
             b["selected"] = name
             self._write(b)
+        return b
+
+    def rename(self, old: str, new: str) -> dict:
+        """Follow a registry label rename: remap this asset's board state (placement, mask,
+        per-image history, z-order slot, selection) from `old` to `new` in place — so a
+        resume-under-a-new-name keeps its arrangement instead of being dropped + re-seeded.
+        No-op if `old` isn't on the board (nothing placed yet) or `new` already holds a slot."""
+        b = self._read()
+        if old == new or old not in b["assets"] or new in b["assets"]:
+            return b
+        b["assets"][new] = b["assets"].pop(old)
+        b["order"] = [new if n == old else n for n in b["order"]]
+        if b["selected"] == old:
+            b["selected"] = new
+        self._write(b)
         return b
 
     # --- mask layer (invisible per-image annotation) -----------------------
@@ -257,7 +278,7 @@ class Board:
         b = self.sync()
         if name in b["assets"]:
             a = b["assets"][name]
-            idx = Workspace(os.path.join(self.home, name)).push_overlay(img, label)
+            idx = Workspace.locate(name, self.home).push_overlay(img, label)
             a["overlay_head"] = idx
             _ensure_layers(a)["mask"]["edge"] = True
             if record:
@@ -288,7 +309,7 @@ class Board:
         if ph is None:
             return
         try:
-            Workspace(os.path.join(self.home, name)).set_head(int(ph))
+            Workspace.locate(name, self.home).set_head(int(ph))
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             pass
 
@@ -299,7 +320,7 @@ class Board:
         if oh is None:
             return
         try:
-            Workspace(os.path.join(self.home, name)).set_overlay_head(int(oh))
+            Workspace.locate(name, self.home).set_overlay_head(int(oh))
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             pass
 
@@ -369,13 +390,13 @@ class Board:
             m["outline"] = []
             m["edge"] = False
             try:                                        # detach the overlay layer chain
-                Workspace(os.path.join(self.home, name)).set_overlay_head(-1)
+                Workspace.locate(name, self.home).set_overlay_head(-1)
             except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
                 pass
             a["overlay_head"] = -1
             try:                                        # drop the legacy single-file overlay
-                os.remove(os.path.join(self.home, name, "mask_edge.png"))
-            except OSError:
+                os.remove(os.path.join(Registry(self.home).dir_by_name(name), "mask_edge.png"))
+            except (OSError, TypeError):
                 pass
             a["history"] = History(_snapshot(a), "open").to_dict()
             self._write(b)

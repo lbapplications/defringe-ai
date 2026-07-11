@@ -3,6 +3,7 @@
 **Governed by:** [`specs/workflow.md`](../specs/workflow.md) (the contract — decisions + rationale).
 This doc is the **concrete** shape: identifiers, on-disk layout, JSON schemas, and the
 navigation/merge semantics. If this and the contract disagree, the contract wins.
+**Build order:** [`workflow-rollout.md`](workflow-rollout.md) — the three phases this design lands in.
 
 ---
 
@@ -14,6 +15,10 @@ navigation/merge semantics. If this and the contract disagree, the contract wins
 
 The `uuid5(path)` is a deterministic name-based UUID (idempotent: same path → same id;
 collision-free in practice). The path is stored inside every record so a lookup **verifies** it.
+
+**Implemented (Phase 1):** `src/defringe_ai/identity.py` (ids + normalization + the png gate) and
+`src/defringe_ai/registry.py` (the `projects.json` mount table: `mount`/`resolve`/`adopt_legacy`).
+Mounting the **same path twice resumes the one asset** (C6) rather than duplicating it.
 
 ## Format constraint
 **png only.** If a `.jpg` (or any non-png) asset is handed in, the tool **rejects it and says why**
@@ -49,7 +54,13 @@ project = {
   "assets": { "<asset_id>": asset, ... }
 }
 
-asset = { "path": "relative/path/asset1.png" }   // relative to the project root
+asset = {
+  "id":   "<asset_id>",                 // = uuid5(relative path); the assets{} key
+  "path": "relative/path/asset1.png",   // relative to the project root; verifies the id
+  "name": "asset1",                     // a human label — how the window/CLI address it (deduped, unique)
+  "dir":  "<home>/<project_id>/<asset_id>"   // where the bytes + history live (stored, not derived,
+                                             //   so pre-identity flat dirs can be adopted in place)
+}
 ```
 No history, no backups, no session refs live here — those are per-asset (history.json) or in
 `session/`. Keeps this file cheap to load whole.

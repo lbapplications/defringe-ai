@@ -6,10 +6,14 @@
 ## A tool is not real until it's registered to the MCP layer
 
 A bare function in `imageops/` is an *implementation*, not a tool. It only becomes a
-**tool** when it's registered with **`@mcp.tool()`** in `server.py` (ideally with a CLI
-subparser too) and listed in the `TAXONOMY` dict. "Add a tool" always means: implement it
-**and** register it **and** document it. An unregistered helper is not a tool — don't call
-it one, and don't leave a headline capability reachable only from a web route.
+**tool** when it's registered under a **taxonomy category** — defined in the matching
+`tools/<category>.py` module and decorated with that module's category decorator (e.g.
+`@transform`, from `core.category("transform", gated=True)`), ideally with a CLI subparser in
+`server.py` too. The decorator registers the tool on the shared MCP server **and** records its
+taxonomy membership, so the taxonomy is **derived from the modules** — there is no hand-kept
+`TAXONOMY` dict. "Add a tool" always means: implement it **and** register it (in its category
+module) **and** document it. An unregistered helper is not a tool — don't call it one, and
+don't leave a headline capability reachable only from a web route.
 
 ## Tools are orthogonal class sets, one idea per class (`imageops/`)
 
@@ -42,18 +46,22 @@ takes/returns point lists). Tool classes import `utils` **only**, never each oth
 ## Adding a tool — the checklist
 
 1. Pick the ONE class its idea fits; a genuinely new idea is a **taxonomy shift** (new
-   class + new `TAXONOMY` category) — surface it, see [orthogonalization](orthogonalization.md).
+   class + new `tools/<category>.py` module) — surface it, see [orthogonalization](orthogonalization.md).
 2. Implement it as a vectorised `@staticmethod` (input first, returns a fresh array/value).
-3. Register `@mcp.tool()` in `server.py` (+ a CLI subparser) and add the name to `TAXONOMY`.
+3. Add the tool to its **category module** (`tools/<category>.py`), decorated with that
+   module's category decorator (+ a CLI subparser in `server.py`, and re-export it from the
+   `server.py` facade). The taxonomy updates itself — no dict to edit.
 4. Return a Pydantic model if it mutates state.
 5. Write the Google-style docstring.
 6. Update the README tool section.
 
 ## The gate (taxonomy of *behaviour*)
 
-`TAXONOMY` groups the MCP tools: **session / transform / shape / annotate / isolate /
-arrange / workspace**. **transform + shape + annotate MUTATE PIXELS and are GATED** — they
-refuse unless an edit session is open (`_apply` enforces it):
+The taxonomy — one module per category under `tools/` — groups the MCP tools: **session /
+transform / shape / annotate / isolate / arrange / workspace** (the `workspace` category is
+`tools/manage.py`, named to avoid clashing with the engine's `workspace.py`). **transform +
+shape + annotate MUTATE PIXELS and are GATED** (`gated=True` on the category) — they refuse
+unless an edit session is open (`core.apply` enforces it):
 
 ```
 edit("<intent>")  →  [gated tools]  →  cancel() (restore)  |  commit() (keep)

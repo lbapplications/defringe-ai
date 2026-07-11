@@ -34,6 +34,7 @@ from typing import Callable
 import numpy as np
 
 from . import imageops as ops
+from .registry import Registry
 
 HOME = os.environ.get("DEFRINGE_HOME", "workspace")
 
@@ -42,37 +43,42 @@ class Workspace:
     def __init__(self, root: str):
         self.root = root
         self.manifest_path = os.path.join(root, "manifest.json")
+        self.renamed_from: str | None = None   # set by open_asset when a resume changed the label
 
     # --- lifecycle ---------------------------------------------------------
 
     @classmethod
     def open_asset(cls, src_path: str, home: str = HOME, name: str | None = None) -> "Workspace":
-        """Copy an external asset into a fresh workspace and seed step 0."""
-        if not os.path.exists(src_path):
-            raise ValueError(f"no such asset: {src_path!r}")
-        name = name or os.path.splitext(os.path.basename(src_path))[0]
-        root = os.path.join(home, name)
-        if os.path.exists(root):
-            shutil.rmtree(root)
-        os.makedirs(os.path.join(root, "source"))
-        os.makedirs(os.path.join(root, "history"))
+        """Mount an external asset by identity, seeding a fresh workspace or **resuming** it.
 
-        ws = cls(root)
-        local_src = os.path.join(root, "source", os.path.basename(src_path))
-        shutil.copy2(src_path, local_src)
-
-        img = ops.Io.load(local_src)
-        step_file = os.path.join("history", "0000-open.png")
-        ops.Io.save(img, os.path.join(root, step_file))
-        ws._write(
-            {
-                "name": name,
-                "source": os.path.relpath(local_src, root),
-                "steps": [{"op": "open", "params": {}, "file": step_file, "ts": _now()}],
-                "head": 0,
-            }
-        )
-        _set_active(home, name)
+        Intake is png-gated (C8) and keyed on the asset's real path (C3/C6): opening the *same*
+        path again resumes the existing workspace — its dir is ``home/<project_id>/<asset_id>/``,
+        addressed by the registry, not by a bare name. The human ``name`` is just a label."""
+        m = Registry(home).mount(src_path, name=name)     # png-gate + identity + (re)register
+        ws = cls(m.dir)
+        ws.renamed_from = m.renamed_from                   # a resume-rename the tool layer migrates
+        if not os.path.exists(ws.manifest_path):           # newly mounted → build + seed step 0
+            os.makedirs(os.path.join(m.dir, "source"), exist_ok=True)
+            os.makedirs(os.path.join(m.dir, "history"), exist_ok=True)
+            local_src = os.path.join(m.dir, "source", os.path.basename(src_path))
+            shutil.copy2(src_path, local_src)
+            img = ops.Io.load(local_src)
+            step_file = os.path.join("history", "0000-open.png")
+            ops.Io.save(img, os.path.join(m.dir, step_file))
+            ws._write(
+                {
+                    "name": m.name,
+                    "source": os.path.relpath(local_src, m.dir),
+                    "steps": [{"op": "open", "params": {}, "file": step_file, "ts": _now()}],
+                    "head": 0,
+                }
+            )
+        else:                                              # resume: keep the manifest label in
+            mf = ws._read()                                # sync with the registry (a rename)
+            if mf.get("name") != m.name:
+                mf["name"] = m.name
+                ws._write(mf)
+        _set_active(home, m.name)
         return ws
 
     @classmethod
@@ -81,32 +87,41 @@ class Workspace:
         name = _get_active(home)
         if not name:
             raise ValueError("no active workspace — call open_asset first")
-        return cls(os.path.join(home, name))
+        return cls.locate(name, home)
 
     @classmethod
     def resolve(cls, name: str = "", home: str = HOME) -> "Workspace":
-        """A workspace by name (which then becomes active), or the active one if blank.
+        """A workspace by label (which then becomes active), or the active one if blank.
 
         This is the versatility hook: the agent can open several assets and address
-        each by name, or omit the name and keep shaping whatever it touched last.
-        """
+        each by label, or omit it and keep shaping whatever it touched last."""
         if not name:
             return cls.active(home)
-        root = os.path.join(home, name)
-        if not os.path.exists(os.path.join(root, "manifest.json")):
-            raise ValueError(f"no workspace named {name!r} — open one first ({cls.list_all(home)})")
+        ws = cls.locate(name, home)
         _set_active(home, name)
-        return cls(root)
+        return ws
+
+    @classmethod
+    def locate(cls, name: str, home: str = HOME) -> "Workspace":
+        """A workspace by label **without** making it active — the read path board/web use to
+        peek at any asset while the active pointer stays put. On a miss it adopts any pre-identity
+        flat dirs once and retries, so a legacy asset resolves without a board sync first."""
+        reg = Registry(home)
+        d = reg.dir_by_name(name)
+        if not d:
+            reg.adopt_legacy()
+            d = reg.dir_by_name(name)
+        if not d:
+            raise ValueError(f"no workspace named {name!r} — open one first ({cls.list_all(home)})")
+        return cls(d)
 
     @classmethod
     def list_all(cls, home: str = HOME) -> list[str]:
-        """Every open workspace, so the agent (or a human) can see what it's juggling."""
-        if not os.path.isdir(home):
-            return []
-        return sorted(
-            d for d in os.listdir(home)
-            if os.path.exists(os.path.join(home, d, "manifest.json"))
-        )
+        """Every *open* workspace label — a registered asset counts as open once its storage
+        exists (a seeded ``manifest.json``), so a dir removed off disk drops from the listing."""
+        reg = Registry(home)
+        return sorted(n for n, d in reg.dir_map().items()   # one table read, not one-per-asset
+                      if os.path.exists(os.path.join(d, "manifest.json")))
 
     # --- edits -------------------------------------------------------------
 

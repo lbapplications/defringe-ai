@@ -30,6 +30,15 @@ def asset_png(tmp_path, rgba) -> str:
 
 
 @pytest.fixture
+def asset_png2(tmp_path, rgba) -> str:
+    """A *second, distinct* source PNG. Identity keys on the path (C3), so opening two names
+    from one file now resolves to one asset — tests that want two assets use two files."""
+    p = tmp_path / "square2.png"
+    Image.fromarray(rgba, mode="RGBA").save(p)
+    return str(p)
+
+
+@pytest.fixture
 def home(tmp_path) -> str:
     """An empty DEFRINGE_HOME (workspace root) on tmp_path."""
     h = tmp_path / "home"
@@ -48,9 +57,11 @@ def opened(home, asset_png):
 
 @pytest.fixture
 def srv(monkeypatch, home):
-    """The server module with its module-global HOME pointed at a tmp workspace root, so the
-    MCP tools and CLI act on an isolated home. Returns the module."""
+    """The server module with the tool surface's HOME pointed at a tmp workspace root, so the
+    MCP tools and CLI act on an isolated home. `HOME` lives in ``tools.core`` (tools read it
+    live; ``server.HOME`` proxies to it), so that's the one place to repoint. Returns the module."""
     from defringe_ai import server
+    from defringe_ai.tools import core
 
-    monkeypatch.setattr(server, "HOME", home)
+    monkeypatch.setattr(core, "HOME", home)
     return server

@@ -26,17 +26,17 @@ def test_open_asset_missing_source_raises(home):
         Workspace.open_asset("/no/such/file.png", home)
 
 
-def test_open_asset_overwrites_existing(home, asset_png):
+def test_open_asset_reopen_is_clean(home, asset_png):
     Workspace.open_asset(asset_png, home, name="dup")
-    ws = Workspace.open_asset(asset_png, home, name="dup")   # root exists → rmtree + recreate
+    ws = Workspace.open_asset(asset_png, home, name="dup")   # same path → resume the one asset
     assert ws.status()["steps"] == 1
 
 
-def test_active_and_resolve(home, asset_png):
+def test_active_and_resolve(home, asset_png, asset_png2):
     Workspace.open_asset(asset_png, home, name="one")
     assert _get_active(home) == "one"
     assert Workspace.active(home).status()["workspace"] == "one"
-    Workspace.open_asset(asset_png, home, name="two")
+    Workspace.open_asset(asset_png2, home, name="two")
     # resolve by name switches active
     assert Workspace.resolve("one", home).status()["workspace"] == "one"
     assert _get_active(home) == "one"
@@ -54,11 +54,35 @@ def test_resolve_unknown_raises(home):
         Workspace.resolve("ghost", home)
 
 
-def test_list_all(home, asset_png):
+def test_locate_adopts_legacy_flat_dir(home, asset_png):
+    """A pre-identity flat workspace resolves via locate's adopt-on-miss (no board sync needed)."""
+    import os
+    import shutil
+
+    Workspace.open_asset(asset_png, home, name="legacy")     # build a real workspace
+    from defringe_ai.registry import Registry
+
+    real = Registry(home).dir_by_name("legacy")
+    flat = os.path.join(home, "legacy")
+    shutil.copytree(real, flat)                              # replicate it as an old flat dir
+    os.remove(os.path.join(home, "projects.json"))          # wipe the registry → only the flat dir remains
+    assert Workspace.locate("legacy", home).status()["steps"] == 1
+
+
+def test_list_all(home, asset_png, asset_png2):
     assert Workspace.list_all(home) == []
     Workspace.open_asset(asset_png, home, name="a")
-    Workspace.open_asset(asset_png, home, name="b")
+    Workspace.open_asset(asset_png2, home, name="b")
     assert Workspace.list_all(home) == ["a", "b"]
+
+
+def test_open_same_path_twice_resumes(home, asset_png):
+    """Identity keys on the path (C6): reopening the same file resumes the one asset."""
+    Workspace.open_asset(asset_png, home, name="a")
+    Workspace.resolve("a", home).apply("crop", ops.Transform.crop, {"x": 0, "y": 0, "w": 8, "h": 8})
+    again = Workspace.open_asset(asset_png, home)      # same path → resume, not a fresh seed
+    assert again.status()["steps"] == 2               # the earlier edit survived
+    assert Workspace.list_all(home) == ["a"]
 
 
 def test_list_all_missing_home(tmp_path):

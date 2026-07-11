@@ -5,11 +5,16 @@ Mechanical, pass/fail invariants for this repo — the checks that DON'T need ju
 (those live in `soft_lint/`, mapped by `HARNESS.md`). Each check below hardens one rule
 from `harness_driver/` into code:
 
-  tool-registry   every @mcp.tool() is in TAXONOMY and vice-versa   (tools.md)
-  tool-docstrings every @mcp.tool() has a docstring                 (docstrings.md)
+  tool-registry   every tool is registered under a taxonomy category (tools.md)
+  tool-docstrings every tool has a docstring                         (docstrings.md)
   readme-tools    every tool name appears in the README             (tools.md)
   frontend-io     no bare fetch( in a React component               (frontend.md)
   nomenclature    tool names are snake_case + no banned name        (nomenclature.md)
+
+Tools live in the ``tools/`` package, one module per taxonomy category, each function
+decorated with that module's ``core.category(...)`` decorator — so the taxonomy is derived
+from the modules. This linter scans those modules by AST: a tool must go through a category
+decorator (a bare ``@mcp.tool()`` that bypasses the taxonomy is flagged).
 
 Pure stdlib + `ast` — imports nothing from the package, so it runs fast and has no side
 effects. Exit code is the number of failing checks (0 = clean).
@@ -23,7 +28,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SERVER = os.path.join(ROOT, "src", "defringe_ai", "server.py")
+TOOLS_DIR = os.path.join(ROOT, "src", "defringe_ai", "tools")
 README = os.path.join(ROOT, "README.md")
 FRONTEND = os.path.join(ROOT, "frontend", "src")
 NOMENCLATURE = os.path.join(ROOT, "harness_driver", "nomenclature.md")
@@ -43,50 +48,91 @@ def _ok(check: str, msg: str) -> None:
     print(f"  \033[32m✓ {check}\033[0m — {msg}")
 
 
-def _server_ast() -> ast.Module:
-    with open(SERVER) as f:
-        return ast.parse(f.read(), filename=SERVER)
+def _mcp_tools(tree: ast.Module, cat_names: frozenset[str] = frozenset()) -> dict[str, ast.FunctionDef]:
+    """Every function that registers a tool → {name: node}.
 
-
-def _mcp_tools(tree: ast.Module) -> dict[str, ast.FunctionDef]:
-    """Every function decorated with @mcp.tool() → {name: node}."""
+    A tool registers either via a category decorator (a name in ``cat_names``, e.g. ``@transform``)
+    or a bare ``@mcp.tool()``. The latter bypasses the taxonomy — detected so the registry check
+    can flag it."""
     tools: dict[str, ast.FunctionDef] = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for dec in node.decorator_list:
-                # @mcp.tool()  → Call(func=Attribute(attr='tool', value=Name('mcp')))
                 fn = dec.func if isinstance(dec, ast.Call) else dec
+                # @mcp.tool()  → Call(func=Attribute(attr='tool', value=Name('mcp')))
                 if isinstance(fn, ast.Attribute) and fn.attr == "tool" and \
                         isinstance(fn.value, ast.Name) and fn.value.id == "mcp":
+                    tools[node.name] = node
+                # @<category>  → a bare Name bound to core.category(...)
+                elif isinstance(fn, ast.Name) and fn.id in cat_names:
                     tools[node.name] = node
     return tools
 
 
-def _taxonomy(tree: ast.Module) -> set[str]:
+def _category_map(tree: ast.Module) -> dict[str, str]:
+    """Module-level names bound to ``core.category("cat", …)`` → their category string.
+
+    e.g. ``transform = core.category("transform", gated=True)`` → ``{"transform": "transform"}``;
+    ``isolate_cat = core.category("isolate")`` → ``{"isolate_cat": "isolate"}``."""
+    out: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "TAXONOMY" for t in node.targets
-        ):
-            groups = ast.literal_eval(node.value)
-            return {name for names in groups.values() for name in names}
-    raise SystemExit("hard_lint: TAXONOMY not found in server.py")
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            fn = node.value.func
+            is_cat = (isinstance(fn, ast.Attribute) and fn.attr == "category") or \
+                     (isinstance(fn, ast.Name) and fn.id == "category")
+            if is_cat and node.value.args and isinstance(node.value.args[0], ast.Constant):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        out[t.id] = node.value.args[0].value
+    return out
+
+
+def _taxonomy(tree: ast.Module) -> set[str]:
+    """The names a tree registers under a taxonomy category (its category-decorated functions)."""
+    cats = _category_map(tree)
+    taxonomy: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                fn = dec.func if isinstance(dec, ast.Call) else dec
+                if isinstance(fn, ast.Name) and fn.id in cats:
+                    taxonomy.add(node.name)
+    return taxonomy
+
+
+def _scan_tools() -> tuple[dict[str, ast.FunctionDef], set[str]]:
+    """Scan every ``tools/`` category module → (all tools {name: node}, taxonomy names).
+
+    A category-decorated function lands in both; a bare ``@mcp.tool()`` lands only in tools,
+    so the registry check surfaces it as a taxonomy bypass."""
+    tools: dict[str, ast.FunctionDef] = {}
+    taxonomy: set[str] = set()
+    for fname in sorted(os.listdir(TOOLS_DIR)):
+        if not fname.endswith(".py") or fname in ("__init__.py", "core.py"):
+            continue
+        with open(os.path.join(TOOLS_DIR, fname)) as f:
+            tree = ast.parse(f.read(), filename=fname)
+        cats = _category_map(tree)
+        tools.update(_mcp_tools(tree, frozenset(cats)))
+        taxonomy |= _taxonomy(tree)
+    return tools, taxonomy
 
 
 def check_tool_registry(tools, taxonomy) -> bool:
-    """@mcp.tool() set must equal TAXONOMY set (minus documented aliases)."""
+    """Every registered tool must go through a taxonomy category (minus documented aliases)."""
     registered = set(tools)
     declared = taxonomy - TAXONOMY_ALIASES
-    missing = declared - registered          # in TAXONOMY, no such tool
-    unlisted = registered - declared         # a tool nobody put in TAXONOMY
+    missing = declared - registered          # in the taxonomy, no such tool
+    unlisted = registered - declared         # a tool that bypassed the category decorator
     if missing or unlisted:
         parts = []
         if unlisted:
-            parts.append(f"tools not in TAXONOMY: {sorted(unlisted)}")
+            parts.append(f"tools bypassing a category (bare @mcp.tool()?): {sorted(unlisted)}")
         if missing:
-            parts.append(f"TAXONOMY names with no @mcp.tool(): {sorted(missing)}")
+            parts.append(f"taxonomy names with no tool: {sorted(missing)}")
         _fail("tool-registry", "; ".join(parts))
         return False
-    _ok("tool-registry", f"{len(registered)} tools, all in TAXONOMY")
+    _ok("tool-registry", f"{len(registered)} tools, all under a taxonomy category")
     return True
 
 
@@ -169,9 +215,7 @@ def check_frontend_io(srcdir: str | None = None) -> bool:
 
 def main() -> int:
     print("» hard_lint — deterministic invariants")
-    tree = _server_ast()
-    tools = _mcp_tools(tree)
-    taxonomy = _taxonomy(tree)
+    tools, taxonomy = _scan_tools()
     results = [
         check_tool_registry(tools, taxonomy),
         check_tool_docstrings(tools),

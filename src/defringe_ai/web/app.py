@@ -33,10 +33,16 @@ from starlette.staticfiles import StaticFiles
 
 from ..board import Board
 from ..history import History
+from ..registry import Registry
 from ..workspace import Workspace
 
 WEBDIR = os.path.dirname(__file__)
 DIST = os.path.join(WEBDIR, "dist")  # the built Vite app (frontend/ → here); served in prod
+
+
+def _dir(home: str, name: str) -> str | None:
+    """An asset's storage directory by label, via the registry (None if unknown)."""
+    return Registry(home).dir_by_name(name)
 
 
 # --- state (board arrangement + workspace edit heads) ----------------------
@@ -47,15 +53,15 @@ def _edge_rev(home: str, name: str) -> str:
     versions (undo/redo across the layer chain) reaches the browser and busts the `<img>`
     cache — even when two versions share a filename slot."""
     try:
-        ws = Workspace(os.path.join(home, name))
+        ws = Workspace.locate(name, home)
         path = ws.overlay_path()
         if path and os.path.exists(path):
             return f"{ws.overlay_head()}:{os.path.getmtime(path)}"
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         pass
     try:
-        return str(os.path.getmtime(os.path.join(home, name, "mask_edge.png")))
-    except OSError:
+        return str(os.path.getmtime(os.path.join(_dir(home, name), "mask_edge.png")))
+    except (OSError, TypeError):
         return ""
 
 
@@ -64,16 +70,17 @@ def build_state(home: str) -> list[dict]:
     sel = b["selected"]
     out = []
     for z, name in enumerate(b["order"]):          # z = index in back->front order
+        d = _dir(home, name)
         try:
-            with open(os.path.join(home, name, "manifest.json")) as f:
+            with open(os.path.join(d, "manifest.json")) as f:
                 m = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, json.JSONDecodeError, TypeError):
             continue
         head = m["head"]
         try:
             from PIL import Image
 
-            w, h = Image.open(os.path.join(home, name, m["steps"][head]["file"])).size
+            w, h = Image.open(os.path.join(d, m["steps"][head]["file"])).size
         except Exception:
             w, h = 0, 0
         a = b["assets"][name]
@@ -114,7 +121,7 @@ def _chains(home: str) -> str:
     if not names:
         return parts[0] + '<div class="empty">No workspaces yet.</div>'
     for name in names:
-        with open(os.path.join(home, name, "manifest.json")) as f:
+        with open(os.path.join(_dir(home, name), "manifest.json")) as f:
             m = json.load(f)
         steps, head = m["steps"], m["head"]
         cards = []
@@ -282,7 +289,7 @@ def build_app(home: str) -> Starlette:
             return JSONResponse({"ok": True})
         # close / bridge need an existing overlay (the edge map) to transform
         try:
-            path = Workspace(os.path.join(home, name)).overlay_path()
+            path = Workspace.locate(name, home).overlay_path()
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             path = None
         if not path or not os.path.exists(path):
@@ -312,12 +319,13 @@ def build_app(home: str) -> Starlette:
         back to the legacy single-file overlay for assets predating the versioned chain."""
         name = os.path.basename(request.path_params["name"])
         try:
-            path = Workspace(os.path.join(home, name)).overlay_path()
+            path = Workspace.locate(name, home).overlay_path()
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
             path = None
         if not path or not os.path.exists(path):
-            legacy = os.path.join(home, name, "mask_edge.png")
-            path = legacy if os.path.exists(legacy) else None
+            d = _dir(home, name)
+            legacy = os.path.join(d, "mask_edge.png") if d else ""
+            path = legacy if legacy and os.path.exists(legacy) else None
         if not path:
             return HTMLResponse("not found", status_code=404)
         return FileResponse(path)
@@ -326,9 +334,10 @@ def build_app(home: str) -> Starlette:
         name = os.path.basename(request.path_params["name"])
         idx = int(request.path_params["idx"])
         try:
-            with open(os.path.join(home, name, "manifest.json")) as f:
-                path = os.path.join(home, name, json.load(f)["steps"][idx]["file"])
-        except (FileNotFoundError, IndexError, KeyError, json.JSONDecodeError):
+            d = _dir(home, name)
+            with open(os.path.join(d, "manifest.json")) as f:
+                path = os.path.join(d, json.load(f)["steps"][idx]["file"])
+        except (FileNotFoundError, IndexError, KeyError, json.JSONDecodeError, TypeError):
             return HTMLResponse("not found", status_code=404)
         if not os.path.exists(path):
             return HTMLResponse("not found", status_code=404)

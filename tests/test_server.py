@@ -83,7 +83,10 @@ def test_edge_detect_makes_a_mask_overlay(app):
     st = app.edge_detect(lo=50, hi=150)
     assert st["head"] == 0 and st["chain"] == ["open"]        # image untouched — original stays HEAD
     # the overlay is a VERSIONED layer snapshot, not a single-file flag
-    assert os.path.exists(os.path.join(app.HOME, "shark", "overlay", "0000-edge → mask.png"))
+    from defringe_ai.registry import Registry
+
+    assert os.path.exists(os.path.join(
+        Registry(app.HOME).dir_by_name("shark"), "overlay", "0000-edge → mask.png"))
     a = Board(app.HOME).sync()["assets"]["shark"]
     assert a["mask"]["edge"] is True and a["overlay_head"] == 0
     Board(app.HOME).undo("shark")                            # image-level undo clears the overlay
@@ -247,6 +250,29 @@ def test_redo_after_undo(app):
     app.undo()
     app.redo()
     assert app.status()["head"] == 1
+
+
+def test_move_with_no_active_workspace_does_not_crash(srv):
+    """`move` before anything is opened resolves to a blank name: it must not blow up on
+    `order.index('')` — it returns z=-1 and no placement."""
+    mv = srv.move(10, 20)
+    assert mv["z"] == -1 and mv["placement"] is None
+
+
+def test_reopen_under_new_name_keeps_board_state(srv, asset_png):
+    """Resume-under-a-new-name renames the registry label; the board arrangement + mask must
+    follow the rename, not be dropped and re-seeded (the finding-#2 regression)."""
+    srv.open_asset(asset_png, name="a")
+    srv.move(500, 300)                                       # place it
+    srv.seed([[5, 5], [15, 15]])                            # and annotate it
+    srv.open_asset(asset_png, name="hero")                  # same path → resume, rename a→hero
+    assert srv.status()["workspace"] == "hero"
+    ls = srv.list_workspaces()["workspaces"]
+    assert ls == ["hero"] and "a" not in ls                 # exactly one asset, under the new label
+    from defringe_ai.board import Board
+    a = Board(srv.HOME).sync()["assets"]["hero"]
+    assert a["x"] == 500 and a["y"] == 300                  # placement carried over
+    assert a["mask"]["dots"] == [[5, 5], [15, 15]]          # mask carried over, not wiped
 
 
 # --- helpers ---------------------------------------------------------------

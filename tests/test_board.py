@@ -10,6 +10,7 @@ import pytest
 
 from defringe_ai import imageops as ops
 from defringe_ai.board import Board, _current_pixel_head, _seed_from_manifest
+from defringe_ai.registry import Registry
 from defringe_ai.workspace import Workspace
 
 
@@ -34,15 +35,15 @@ def test_sync_drops_stale(home, asset_png):
     # remove the workspace on disk, re-sync → asset drops out
     import shutil
 
-    shutil.rmtree(os.path.join(home, "a"))
+    shutil.rmtree(Registry(home).dir_by_name("a"))
     state = b.sync()
     assert "a" not in state["assets"]
     assert state["selected"] is None
 
 
-def test_place_and_bring_to_front(board, asset_png, home):
+def test_place_and_bring_to_front(board, asset_png2, home):
     b, name = board
-    Workspace.open_asset(asset_png, home, name="b")
+    Workspace.open_asset(asset_png2, home, name="b")
     b.place(name, x=100, y=50, scale=2.0)
     a = b.sync()["assets"][name]
     assert a["x"] == 100 and a["y"] == 50 and a["scale"] == 2.0
@@ -56,9 +57,9 @@ def test_place_scale_clamped(board):
     assert b.sync()["assets"][name]["scale"] == 6.0
 
 
-def test_select(board, asset_png, home):
+def test_select(board, asset_png2, home):
     b, name = board
-    Workspace.open_asset(asset_png, home, name="b")
+    Workspace.open_asset(asset_png2, home, name="b")
     b.select(name)
     assert b.sync()["selected"] == name
 
@@ -142,7 +143,7 @@ def _overlay(shape=(20, 20)):
 def test_push_overlay_versions_record_and_undo(board):
     b, name = board
     b.sync()
-    ws = Workspace(os.path.join(b.home, name))
+    ws = Workspace.locate(name, b.home)
 
     b.push_overlay(name, _overlay(), "edge → mask")        # version 0, one timeline action
     a = b.sync()["assets"][name]
@@ -225,7 +226,7 @@ def test_current_pixel_head_missing(home):
 
 def test_seed_from_manifest_reads_canvas(home, asset_png):
     Workspace.open_asset(asset_png, home, name="a")
-    mpath = os.path.join(home, "a", "manifest.json")
+    mpath = os.path.join(Registry(home).dir_by_name("a"), "manifest.json")
     m = json.load(open(mpath))
     m["canvas"] = {"x": 7, "y": 8, "scale": 1.5}
     json.dump(m, open(mpath, "w"))

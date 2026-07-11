@@ -4,7 +4,12 @@
 layer. Each layer owns one concern and doesn't reach across.
 
 ```
-server.py     MCP tools + CLI + transport — THIN over the domain layers
+server.py     the FACADE (re-exports the tools) + CLI + transport — THIN over everything below
+   │
+tools/        the MCP tool surface, ONE MODULE PER TAXONOMY CATEGORY (session/transform/shape/
+   │          annotate/isolate/derive/arrange/manage=workspace); the taxonomy DERIVES from the
+   │          modules via core.category(...) — no hand-kept dict. core.py holds the shared mcp
+   │          server, live HOME, and the edit gate. See tools.md.
    │
 web/app.py    the edit screen's SERVER: routes, SSE state stream, serves the built UI
    │          from web/dist; state = board + workspace heads. THIN (see frontend below).
@@ -12,14 +17,17 @@ web/app.py    the edit screen's SERVER: routes, SSE state stream, serves the bui
 frontend/     the edit screen's UI: a Vite + React + Konva app (see frontend.md).
    │          Built by `pnpm build` into web/dist; talks to app.py over /api + SSE only.
    │
+   ├── identity.py   deterministic uuid5 project/asset ids + the png intake gate (C3/C8)
+   ├── registry.py   the projects.json MOUNT TABLE: path↔id↔dir, resume-on-reopen, adopt_legacy
    ├── board.py      the ARRANGEMENT: per-asset x/y/scale, z-order (ordered list,
    │                 Konva-style — not a growing counter), selection, the invisible
    │                 MASK layer (dots/outline/lock), and per-image undo (via history.py)
    ├── workspace.py  ONE asset's PIXEL edit history (open/apply/undo/collapse/export) +
    │                 the mask-OVERLAY layer chain (push_overlay/overlay_head, sibling to
-   │                 the pixel chain) + the edit SESSION gate (begin/cancel/commit + backup)
+   │                 the pixel chain) + the edit SESSION gate (begin/cancel/commit + backup).
+   │                 Assets live id-keyed at workspace/<project_id>/<asset_id>/ (via registry)
    ├── history.py    the per-image undo ENGINE — generic, knows nothing about pixels/dots
-   └── imageops/     the TOOLS as orthogonal class sets (see tools.md)
+   └── imageops/     the TOOL IMPLEMENTATIONS as orthogonal class sets (see tools.md)
 ```
 
 **Orthogonality rules that must hold:**

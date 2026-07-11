@@ -55,8 +55,30 @@ tools = _tools(TWO_TOOLS)
 expect("mcp_tools finds decorated fns", set(tools) == {"alpha", "beta"})
 expect("mcp_tools ignores undecorated", "not_a_tool" not in tools)
 
-TAX_SRC = 'TAXONOMY = {"g1": ["alpha"], "g2": ["beta"]}\n'
-expect("taxonomy literal parsed", check._taxonomy(ast.parse(TAX_SRC)) == {"alpha", "beta"})
+# The real structure: a category decorator from core.category(...), applied to the tools.
+CAT_SRC = """
+from . import core
+transform = core.category("transform", gated=True)
+manage = core.category("workspace")
+@transform
+def alpha():
+    "doc a"
+    return 1
+@manage
+def beta():
+    "doc b"
+    return 2
+def not_a_tool():
+    return 3
+"""
+cat_tree = ast.parse(CAT_SRC)
+cmap = check._category_map(cat_tree)
+expect("category_map reads decorator names", cmap == {"transform": "transform", "manage": "workspace"})
+expect("mcp_tools finds category-decorated fns",
+       set(check._mcp_tools(cat_tree, frozenset(cmap))) == {"alpha", "beta"})
+expect("taxonomy derived from category decorators", check._taxonomy(cat_tree) == {"alpha", "beta"})
+expect("bare mcp.tool bypass counts as a tool, not in taxonomy",
+       set(_tools(TWO_TOOLS)) - check._taxonomy(ast.parse(TWO_TOOLS)) == {"alpha", "beta"})
 
 
 # --- tool-registry --------------------------------------------------------

@@ -21,15 +21,16 @@ function in one area starts needing a concept from another.
 
 ## Taxonomy shifts — surface them, don't smuggle them
 
-A **taxonomy shift** is any change to the *set of ideas*: a new tool class, a new
-`TAXONOMY` category in `server.py`, a new Pydantic result model, or promoting a helper to
-`utils`. When you make one:
+A **taxonomy shift** is any change to the *set of ideas*: a new tool class, a new taxonomy
+category (a new `tools/<category>.py` module), a new Pydantic result model, or promoting a
+helper to `utils`. When you make one:
 
 - **Call it out** in your summary and the commit message ("taxonomy shift: added the
   `isolate` category / `Geometry` class / `utils` promotion").
-- Keep the reflections in sync in the **same change**: the code class, the `server.py`
-  `TAXONOMY` dict, the README tool section, and the relevant rule file. A shift that
-  updates one but not the others is half-done.
+- Keep the reflections in sync in the **same change**: the code class, the new
+  `tools/<category>.py` module (the taxonomy derives from it — no dict to edit), the README
+  tool section, and the relevant rule file. A shift that updates one but not the others is
+  half-done.
 
 Orthogonality is the invariant; a taxonomy shift is the *only* sanctioned way to widen it,
 and it must be explicit.
