@@ -131,9 +131,10 @@ The working rules for this repo are **provider-agnostic**: they live in `harness
 (one concern per file) and are mapped by **[HARNESS.md](HARNESS.md)**, which is the
 authoritative guidance any AI agent should follow. To point an agent at them:
 
-- **Claude Code** — nothing to do. `CLAUDE.md` is auto-loaded and **chains** to HARNESS.md
-  (`CLAUDE.md` → `HARNESS.md` → the `harness_driver/*.md` rule in scope). `CLAUDE.md` holds
-  only personal prefs; the rules are in the harness.
+- **Claude Code** — `CLAUDE.md` is **personal and git-ignored** (not shared). Keep a local
+  `CLAUDE.md` that says *"read HARNESS.md"* alongside your own prefs; Claude Code auto-loads
+  it and follows the chain `CLAUDE.md` → `HARNESS.md` → the `harness_driver/*.md` rule in
+  scope. The shared, canonical guidance is **HARNESS.md** + `harness_driver/`.
 - **Any other provider** — add **HARNESS.md** (and the `harness_driver/` rules it maps) to
   your agent's system/context/instructions, or create a thin entry file that says *"read
   HARNESS.md"*. Keep provider-specific prefs in that entry file; **never copy rules out of

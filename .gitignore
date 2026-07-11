@@ -24,6 +24,11 @@ node_modules/
 frontend/*.tsbuildinfo
 .vite/
 
+# Personal / provider-local — NOT shared. The canonical, provider-agnostic guidance is
+# HARNESS.md + harness_driver/ (committed); CLAUDE.md is my personal prefs that chain to it.
+.claude/
+CLAUDE.md
+
 # OS / editor
 .DS_Store
 .idea/
