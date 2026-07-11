@@ -20,6 +20,10 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const nodes = useRef(new Map<string, Konva.Group>());
   const trRef = useRef<Konva.Transformer>(null);
+  // Optimistic per-asset scale from an in-flight resize: the server round-trips over SSE
+  // in up to ~0.4s, so we render the new size immediately and clear each entry once the
+  // pushed a.scale catches up. Keeps a stretch smooth instead of snapping back and waiting.
+  const [optScale, setOptScale] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const el = boxRef.current;
@@ -36,23 +40,44 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
 
   const selected = assets.find((a) => a.selected) || null;
 
-  // bind the transformer to the selected asset (resize only in move tool, unlocked)
+  // bind the transformer to the selected asset (resize only in move tool, unlocked), and
+  // refit its handles when the optimistic size changes (React resizes the child image, but
+  // Konva's Transformer needs a nudge to recompute its box around the new bounds).
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
     const node = selected && tool === "move" && !selected.locked ? nodes.current.get(selected.name) : null;
     tr.nodes(node ? [node] : []);
+    tr.forceUpdate();
     tr.getLayer()?.batchDraw();
-  }, [selected, tool, assets]);
+  }, [selected, tool, assets, optScale]);
+
+  // Drop each optimistic scale once the server's pushed a.scale matches it (gesture landed).
+  useEffect(() => {
+    setOptScale((m) => {
+      let next = m;
+      for (const a of assets) {
+        if (a.name in m && Math.abs(a.scale - m[a.name]) < 1e-3) {
+          if (next === m) next = { ...m };
+          delete next[a.name];
+        }
+      }
+      return next;
+    });
+  }, [assets]);
 
   function onTransformEnd(a: Asset, node: Konva.Group) {
-    // display width = baseW * scale; the transformer multiplies it by scaleX, so the new
-    // board scale is simply the old one times scaleX. Reset the node's scale (the resized
-    // image size is re-derived from a.scale on the next SSE render).
+    // display width = baseW * scale; the transformer multiplies the current display size by
+    // scaleX, so the new board scale is the current one times scaleX. Reset the node's own
+    // scale to 1 and hold the result optimistically (optScale) so the image shows the new
+    // size right away — it's re-derived from a.scale once the SSE echo arrives.
     const scaleX = node.scaleX();
     node.scaleX(1);
     node.scaleY(1);
-    post("/api/move", { name: a.name, scale: Math.max(0.15, Math.min(8, a.scale * scaleX)) });
+    const base = optScale[a.name] ?? a.scale;
+    const next = Math.max(0.15, Math.min(8, base * scaleX));
+    setOptScale((m) => ({ ...m, [a.name]: next }));
+    post("/api/move", { name: a.name, scale: next });
   }
 
   function onBackgroundClick(e: Konva.KonvaEventObject<MouseEvent>) {
@@ -72,6 +97,7 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
                 tool={tool}
                 showImg={showImg}
                 showMask={showMask}
+                scaleOverride={optScale[a.name]}
                 onSelect={(name) => post("/api/select", { name })}
                 nodeRef={registerNode}
               />

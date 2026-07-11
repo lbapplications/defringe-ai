@@ -1,4 +1,3 @@
-/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -23,6 +22,9 @@ export default defineConfig({
   // Vitest: fast jsdom unit tests over the pure logic in state.ts (the module the
   // frontend.md rule funnels all server I/O through). Coverage is gated so the UI's
   // data plane stays as tested as the Python side.
+  // @ts-expect-error — vitest@2 augments vite@5's config types, but the build runs on
+  // vite@6, so `test` reads as an excess property to tsc. Harmless: vitest reads it at
+  // runtime regardless. Drop this once vitest is bumped to a vite@6-aligned major.
   test: {
     environment: "jsdom",
     globals: true,

@@ -29,6 +29,10 @@ describe("dispScale", () => {
   it("falls back to raw scale when width is 0", () => {
     expect(dispScale(asset({ w: 0, scale: 1.5 }))).toBe(1.5);
   });
+  it("honors an optimistic scale override over a.scale", () => {
+    // same asset, but a resize gesture is holding scale 2 → doubled on-board size
+    expect(dispScale(asset({ w: 100, h: 50, scale: 1 }), 2)).toBe(4);
+  });
 });
 
 describe("post", () => {

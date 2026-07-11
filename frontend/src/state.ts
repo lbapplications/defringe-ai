@@ -39,9 +39,13 @@ export function baseW(a: Pick<Asset, "w" | "h">): number {
   return a.w >= a.h ? 200 : 200 * (a.w / a.h);
 }
 
-/** Konva display scale that turns image-space pixels into the on-board size. */
-export function dispScale(a: Asset): number {
-  return a.w ? (baseW(a) * a.scale) / a.w : a.scale;
+/**
+ * Konva display scale that turns image-space pixels into the on-board size. `scale`
+ * defaults to the asset's server scale, but a gesture in flight (e.g. an optimistic
+ * resize) can pass its own value so the view holds the new size before SSE confirms it.
+ */
+export function dispScale(a: Asset, scale: number = a.scale): number {
+  return a.w ? (baseW(a) * scale) / a.w : scale;
 }
 
 /**

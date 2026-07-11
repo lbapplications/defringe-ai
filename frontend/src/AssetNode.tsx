@@ -9,6 +9,9 @@ type Props = {
   tool: "move" | "dot";
   showImg: boolean;
   showMask: boolean;
+  // Optimistic scale held during a resize gesture until the server echoes it back over SSE
+  // (see Canvas). When set it overrides a.scale so the image doesn't snap back and wait.
+  scaleOverride?: number;
   onSelect: (name: string) => void;
   nodeRef: (name: string, node: Konva.Group | null) => void;
 };
@@ -16,7 +19,7 @@ type Props = {
 // One board asset: the image plus its mask overlay (seed dots + derived outline), all in
 // one Konva Group. The group carries position; the image is drawn at its display size and
 // mask geometry is mapped image-space -> display-space so dots/outline ride with it.
-export default function AssetNode({ a, tool, showImg, showMask, onSelect, nodeRef }: Props) {
+export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, onSelect, nodeRef }: Props) {
   const [image] = useImage(`/img/${a.name}/${a.head}?v=${encodeURIComponent(a.rev)}`);
   const groupRef = useRef<Konva.Group>(null);
 
@@ -25,7 +28,7 @@ export default function AssetNode({ a, tool, showImg, showMask, onSelect, nodeRe
     return () => nodeRef(a.name, null);
   }, [a.name, nodeRef]);
 
-  const s = dispScale(a);
+  const s = dispScale(a, scaleOverride ?? a.scale);
   const dispW = a.w * s;
   const dispH = a.h * s;
   const draggable = tool === "move" && !a.locked;
