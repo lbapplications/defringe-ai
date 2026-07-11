@@ -1,11 +1,13 @@
 # defringe-ai
 
-**AI-native image tooling — "free Photoshop for UI."**
+**An experiment in agent-driven image editing.**
 
-A small [MCP](https://modelcontextprotocol.io) server that hands a vision-capable AI a
-set of **deterministic raster transforms** — crop, key, mask, clean, composite — so it
-can turn reference art, screenshots, and concept images into game/UI-ready assets
-*without a human in an image editor*.
+Can a vision-capable agent edit images *effectively* when you hand it a set of
+**deterministic raster transforms** — crop, key, mask, clean, composite — that it calls,
+looks at, and re-tunes? This is a small [MCP](https://modelcontextprotocol.io) server
+built to probe that question. Turning reference art, screenshots, and concept images into
+game/UI-ready assets *without a human in an image editor* is one motivating use case — but
+the goal is the general capability, not a product.
 
 ## Why this works
 

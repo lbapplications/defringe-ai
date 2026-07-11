@@ -3,7 +3,9 @@
 **Scope — read before** branching, committing, opening a PR, adding CI/config/packaging,
 or any "let's make this proper" restructuring.
 
-This is **a public scratchpad to test an MCP**, not a product.
+This is **an experiment: can an agent edit images *effectively* when handed deterministic
+raster tools?** A public scratchpad to probe that question — **not a product.** (UI/game
+asset prep is one motivating use case, not the mission.)
 
 - **One branch: `master`.** No feature branches, no PRs, no worktrees to babysit.
   **Commit straight to `master`**; push when asked. Never `gh pr create` unless asked.

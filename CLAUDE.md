@@ -1,7 +1,9 @@
 # defringe-ai
 
-**AI-native image tooling — "free Photoshop for UI."** A small MCP server that hands a
-vision-capable AI deterministic raster transforms it calls, looks at, and re-tunes.
+**An experiment in agent-driven image editing.** A small MCP server that hands a
+vision-capable AI deterministic raster transforms it calls, looks at, and re-tunes — a
+testbed for whether an agent can edit images *effectively* this way. UI/game asset prep
+is one motivating case; the question is general.
 
 - **What it is / how to run it / the full tool reference → [README.md](README.md)** (user-facing).
 - **How to work in this repo → the rules below.** This file is just the map.
