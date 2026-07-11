@@ -35,6 +35,7 @@ from ..history import History
 from ..workspace import Workspace
 
 WEBDIR = os.path.dirname(__file__)
+DIST = os.path.join(WEBDIR, "dist")  # the built Vite app (frontend/ → here); served in prod
 
 
 # --- state (board arrangement + workspace edit heads) ----------------------
@@ -114,7 +115,14 @@ def _chains(home: str) -> str:
 
 def serve_preview(home: str, host: str, port: int) -> None:
     async def index(_r):
-        return FileResponse(os.path.join(WEBDIR, "canvas.html"))
+        idx = os.path.join(DIST, "index.html")
+        if os.path.exists(idx):
+            return FileResponse(idx)
+        return HTMLResponse(
+            "<h1>frontend not built</h1><p>Run <code>pnpm install &amp;&amp; pnpm build</code> "
+            "in <code>frontend/</code> (or <code>pnpm dev</code> for the proxied dev server).</p>",
+            status_code=503,
+        )
 
     async def chains(_r):
         return HTMLResponse(_chains(home))
@@ -216,7 +224,7 @@ def serve_preview(home: str, host: str, port: int) -> None:
             return HTMLResponse("not found", status_code=404)
         return FileResponse(path)
 
-    app = Starlette(routes=[
+    routes = [
         Route("/", index),
         Route("/chains", chains),
         Route("/api/events", events),
@@ -230,6 +238,10 @@ def serve_preview(home: str, host: str, port: int) -> None:
         Route("/api/undo", api_undo, methods=["POST"]),
         Route("/api/redo", api_redo, methods=["POST"]),
         Route("/img/{name}/{idx:int}", image),
-        Mount("/static", app=StaticFiles(directory=WEBDIR)),
-    ])
+    ]
+    # the built Vite bundle references /assets/*; only mount when it exists so an
+    # unbuilt checkout still boots (index() then shows the "run pnpm build" hint).
+    if os.path.isdir(os.path.join(DIST, "assets")):
+        routes.append(Mount("/assets", app=StaticFiles(directory=os.path.join(DIST, "assets"))))
+    app = Starlette(routes=routes)
     uvicorn.run(app, host=host, port=port, log_level="warning")

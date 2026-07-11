@@ -10,7 +10,18 @@ cd /home/kerna/defringe-ai
 DEFRINGE_HOME=$PWD/workspace uv run defringe-ai serve --http --preview
 ```
 
-MCP on **:47823/mcp**, edit screen on **:47824** (uncommon ports; auto-bump if taken).
+MCP on **:47823/mcp**, edit screen on **:47824** (uncommon ports; auto-bump if taken). The
+edit screen is the **built** Vite app in `web/dist`; an unbuilt checkout still boots and
+shows a "run pnpm build" hint. First time / after frontend deps change: `cd frontend &&
+pnpm install`.
+
+## Two ways to run the UI
+
+- **Prod (what the Python server serves):** `cd frontend && pnpm build` → `web/dist`, then
+  the running server serves it at :47824. Rebuild + hard-refresh to see UI changes.
+- **Dev (live HMR while iterating):** `cd frontend && pnpm dev` → Vite on **:47825**,
+  proxying `/api`, `/img`, and the SSE stream to the Python server on :47824. Edit React and
+  it hot-reloads instantly — no build, no server restart. Use `http://localhost:47825`.
 
 ## Restart correctly (two real gotchas)
 
@@ -18,10 +29,11 @@ MCP on **:47823/mcp**, edit screen on **:47824** (uncommon ports; auto-bump if t
   Do **not** chain the launch after a `pkill` in the *same* command — the `pkill`'s
   **exit 144** (just the signal; the kill worked) tears down the just-spawned child.
 - **What needs what to show up:**
-  - **Python change** (imageops/board/workspace/history/app.py) → **restart the server**.
-  - **canvas.js change** → **restart** (the SSE build-stamp then auto-reloads open tabs).
-  - **canvas.html / canvas.css change** → **hard-refresh the tab** (static files reload
-    from disk; no restart needed, but no auto-reload either).
+  - **Python change** (imageops/board/workspace/history/app.py) → **restart the server**
+    (the SSE build-stamp then auto-reloads open tabs).
+  - **Frontend change** (`frontend/src/**`) → in **dev** (`pnpm dev`) it HMR-reloads
+    instantly; in **prod** it needs `pnpm build` + a tab refresh (rebuilding `web/dist`
+    doesn't restart Python, so the build-stamp auto-reload does NOT fire — refresh yourself).
 
 ## After restart
 

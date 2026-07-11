@@ -17,6 +17,12 @@ workspace/*
 out/
 *.tmp.png
 
+# Frontend (Vite/React). Build output is generated into the Python package's web/dist by
+# `pnpm build` — regenerated, not committed (dist/ above already ignores it).
+node_modules/
+frontend/*.tsbuildinfo
+.vite/
+
 # OS / editor
 .DS_Store
 .idea/

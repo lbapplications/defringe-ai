@@ -77,7 +77,15 @@ uv run defringe-ai export out.png
 
 # --- for an agent / MCP client ---
 uv run defringe-ai serve                       # stdio
-uv run defringe-ai serve --http --preview      # HTTP + browser gallery
+uv run defringe-ai serve --http --preview      # HTTP + browser edit screen
+```
+
+The **edit screen** (`--preview`) is a Vite + React + Konva app in `frontend/`. Build it
+once so the server can serve it:
+
+```bash
+cd frontend && pnpm install && pnpm build      # → src/defringe_ai/web/dist (served at :47824)
+pnpm dev                                        # or: live HMR on :47825, proxying to the server
 ```
 
 Ports default to the **uncommon** `47823` (MCP) / `47824` (preview) and **auto-bump to
@@ -148,16 +156,22 @@ buttons (Dot → Connect → Cut out).
 
 ### The edit screen
 
-`serve --preview` opens a **canvas** at the preview URL: every asset's current image,
-placed at its `(x,y)`, on a checkerboard, pushed live over **SSE** (no polling; the tab
-auto-reloads when the server restarts). A **left toolbox** drives the isolation flow:
+`serve --preview` opens a **Konva canvas** (React, built with Vite) at the preview URL:
+every asset's current image, placed at its `(x,y)` on a grey/black transparency grid,
+pushed live over **SSE** (no polling; the tab auto-reloads when the server restarts). Drag
+and resize use Konva's native transform handles. A **left toolbox** drives the isolation flow:
 
-- **Move** / **Dot** tools — drag images, or click to drop surface dots
+- **Move** / **Dot** tools — drag/resize images (corner handles), or click to drop surface dots
+- **View: Image / Mask** — toggle either layer off (hiding the image reveals the grid, the
+  same read as a cut-out alpha)
 - **Lock** — pin an image so clicks land as dots instead of dragging it
 - **Connect dots (hull → snap)** → **Cut out (fill mask → alpha)** — the isolation path
 - **Undo / Redo** (Ctrl-Z / Ctrl-Shift-Z) — **per-image, two-level**: placing dots bundles
   into one timeline action, but each dot is individually undoable while you're still
   placing them; any other action collapses the bundle. A live timeline shows the history.
+
+The UI is orthogonal to the backend — it talks to the server only over `/api` + `/img` +
+SSE. Its structure and conventions live in `.claude/rules/frontend.md`.
 
 Assets are movable by the agent (the `move` tool) and by you (drag — the drop persists).
 `/chains` shows the per-asset reversible pixel edit history.
@@ -166,7 +180,7 @@ Assets are movable by the agent (the `move` tool) and by you (drag — the drop 
 
 - [x] MCP skeleton + NumPy core (`key_background`, `trim_alpha`, `defringe`, `upscale`, `silhouette_mask`, `canny`)
 - [x] on-disk workspace with reversible undo/redo + `collapse` (verify), shared by CLI and MCP
-- [x] annotate + shapes (`mark`, `draw_shape`, `draw_line`) and the live edit screen (SSE, left toolbox)
+- [x] annotate + shapes (`mark`, `draw_shape`, `draw_line`) and the live edit screen (Vite/React/Konva, SSE, left toolbox)
 - [x] **isolation** — seed dots → `hull_snap` (convex hull → snap inward) → `fill_polygon_alpha`
 - [x] per-image two-level undo (dots bundle into one action, each individually undoable mid-focus)
 - [ ] **fully-automatic isolation** — `canny → close gaps → findContours → fill largest contour` (no seed dots)
