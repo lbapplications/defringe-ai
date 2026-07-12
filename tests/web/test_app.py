@@ -213,3 +213,26 @@ def test_window_edit_projects_onto_real_file(client, asset_png):
     assert ws.status()["chain"][-1] == "isolate"
     assert filecmp.cmp(ws.current_path(), asset_png, shallow=False)   # HEAD landed on the real file
     assert os.path.exists(asset_png + ".bk")                          # pristine original preserved
+
+
+def test_api_merge_ships_and_refuses(client, asset_png):
+    """The window's Merge button → /api/merge ships an approved commit; a mid-edit-session merge
+    is refused (guided), and an unknown session degrades to ok:False rather than 500ing."""
+    import filecmp
+
+    c, home, name, s = client
+    for x, y in ([2, 2], [18, 2], [18, 18], [2, 18]):
+        c.post("/api/dot", json={"session": s, "x": x, "y": y})
+    c.post("/api/connect", json={"session": s})
+    c.post("/api/isolate", json={"session": s})            # a real pixel edit (self-contained session)
+    r = c.post("/api/merge", json={"session": s}).json()
+    assert r["ok"] and r["commit"] == 0 and r["commits"] == [0]
+    ws = Workspace.locate(name, home)
+    assert filecmp.cmp(ws.current_path(), asset_png, shallow=False)   # approved state on the real file
+    assert ws.status()["steps"] == 1                                  # fine chain collapsed
+    # mid-edit-session merge is refused with guidance
+    ws.begin_edit("wip")
+    bad = c.post("/api/merge", json={"session": s}).json()
+    assert bad["ok"] is False and "edit session" in bad["error"]
+    ws.cancel_edit()
+    assert c.post("/api/merge", json={"session": "ghost"}).json()["ok"] is False   # unknown session

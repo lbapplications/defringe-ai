@@ -8,6 +8,7 @@ Routes:
   /api/events    SSE state stream (pushes only on change)
   /api/move      POST {session,x?,y?,scale?}   persist a drag/resize
   /api/select    POST {session}                select + bring to front
+  /api/merge     POST {session}                ship the current state to the real file (approved commit, C10)
   /img/{s}/{i}   the i-th history snapshot of the asset behind session s
   /chains        the per-asset reversible edit chains
 
@@ -278,6 +279,23 @@ def build_app(home: str) -> Starlette:
         advance(body, name)
         return JSONResponse({"ok": True})
 
+    async def api_merge(request):
+        """Ship the selected asset's current state onto the user's real file as an approved commit
+        (C10) — the human clicking Merge *is* the "is this good?" approval. Archives the state into
+        the backup ledger and collapses the fine chain. Refuses (guided, not 500) on a mid-edit-
+        session or an asset with no real file, and degrades on an unknown session like its siblings."""
+        b = await request.json()
+        name = resolve(b, "merge")
+        loc = Registry(home).locate(name) if name else None
+        if not loc:
+            return JSONResponse({"ok": False, "error": "unknown session"})
+        try:
+            res = Projection(home, *loc).merge(Workspace.locate(name, home))
+        except (ValueError, OSError) as e:
+            return JSONResponse({"ok": False, "error": str(e)})
+        advance(b, name)                                  # cursor → the collapsed base
+        return JSONResponse({"ok": True, **res})
+
     async def api_undo(request):
         b = await request.json()
         name = resolve(b, "undo")
@@ -421,6 +439,7 @@ def build_app(home: str) -> Starlette:
         Route("/api/connect", api_connect, methods=["POST"]),
         Route("/api/derive", api_derive, methods=["POST"]),
         Route("/api/isolate", api_isolate, methods=["POST"]),
+        Route("/api/merge", api_merge, methods=["POST"]),
         Route("/api/undo", api_undo, methods=["POST"]),
         Route("/api/redo", api_redo, methods=["POST"]),
         Route("/api/history/goto", api_goto, methods=["POST"]),

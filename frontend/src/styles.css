@@ -39,6 +39,8 @@ header .hint { color: #666; font-size: 11px; margin-left: auto; }
 .tool-btn.off { opacity: .45; }
 .tool-btn:disabled, .wide-btn:disabled { opacity: .4; cursor: default; }
 .wide-btn.on { background: #3a2a0c; border-color: #f5a623; color: #ffdf9e; }
+.wide-btn.merge-btn:not(:disabled) { background: #0f2e1a; border-color: #2f9e5e; color: #8ff0b6; }
+.wide-btn.merge-btn:hover:not(:disabled) { background: #143d23; border-color: #3fbf76; }
 
 .sel-name { font-size: 12px; color: #9ad; word-break: break-all; }
 .muted { font-size: 11px; color: #777; }

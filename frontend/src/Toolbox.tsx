@@ -26,6 +26,14 @@ export default function Toolbox({
   const a = assets.find((x) => x.selected) || null;
   const dots = a ? a.dots.length : 0;
   const act = (url: string) => a && post(url, { session: a.session });
+  // Merge = ship the current state onto the user's real file as an approved commit (C10). The
+  // click IS the "is this good?" approval; confirm guards the fat-finger, then report the result.
+  const merge = async () => {
+    if (!a || !confirm(`Merge "${a.name}" onto its real file as an approved commit?`)) return;
+    const r = await post("/api/merge", { session: a.session });
+    const j = await r.json();
+    alert(j.ok ? `Merged "${a.name}" → commit ${j.commit} (ledger ${JSON.stringify(j.commits)})` : `Merge refused: ${j.error}`);
+  };
   const derive = (op: string, params: object) => a && post("/api/derive", { session: a.session, op, ...params });
   // Derive-tool slider params — adjust, then click the op to apply with these values.
   const [lo, setLo] = useState(100);
@@ -155,6 +163,13 @@ export default function Toolbox({
           </button>
           <button className="wide-btn" disabled={!a || dots === 0} onClick={() => act("/api/dots/clear")}>
             Clear dots
+          </button>
+        </Group>
+
+        <Group label="Deliver">
+          <div className="muted">Ship the current state onto the real file as an approved commit.</div>
+          <button className="wide-btn merge-btn" disabled={!a} onClick={merge} title="approval is the commit — writes the user's real file, archives a backup, collapses the chain">
+            ✓ Merge (approve → real file)
           </button>
         </Group>
       </div>
