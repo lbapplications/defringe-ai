@@ -91,14 +91,9 @@ def workspace(session: str) -> tuple[str, Workspace]:
 
 def advance(session: str, ws: Workspace) -> None:
     """Advance the session's cursor to ``ws``'s live HEADs — the server owning the cursor (C5).
-    The pixel state maps to ``state_<head>``; the mask/overlay maps to ``mask_<overlay_head>.png``
-    (None when the asset carries no overlay). A no-op when nothing moved."""
-    oh = ws.overlay_head()
-    Sessions(HOME).advance(
-        session,
-        state_id=f"state_{ws.head()}",
-        mask_id=f"mask_{oh}.png" if oh >= 0 else None,
-    )
+    Delegates to :meth:`Sessions.advance_to`, the one place the ``(session, workspace) → cursor``
+    derivation lives, so the MCP tools and the window can't drift apart. A no-op when nothing moved."""
+    Sessions(HOME).advance_to(session, ws)
 
 
 def apply(op: str, fn, session: str, **params) -> dict:

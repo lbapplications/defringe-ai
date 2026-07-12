@@ -154,6 +154,18 @@ class Sessions:
         self._persist(s)
         _log(f"{s['name']} advanced → {state_id}" + (f" / {mask_id}" if mask_id else ""))
 
+    def advance_to(self, session_id: str, ws) -> None:
+        """Advance the cursor to a live :class:`~.workspace.Workspace`'s HEADs. This is the one
+        place the ``(session, workspace) → cursor`` derivation lives — the pixel state maps to
+        ``state_<head>``, the overlay to ``mask_<overlay_head>.png`` (None when the asset carries
+        no overlay). **Both** addressed surfaces advance through here: the MCP tools (via
+        ``tools.core.advance``) and the window (via ``web/app.py``), so neither can drift from the
+        other's notion of the cursor. ``ws`` is duck-typed (``.head()`` / ``.overlay_head()``) so
+        this layer takes no hard dependency on the engine below it."""
+        oh = ws.overlay_head()
+        self.advance(session_id, state_id=f"state_{ws.head()}",
+                     mask_id=f"mask_{oh}.png" if oh >= 0 else None)
+
     # --- listing -----------------------------------------------------------
 
     def working(self) -> dict:

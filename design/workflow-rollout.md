@@ -75,9 +75,17 @@ human-readable display field, never as the addressing key.
   not one of the two addressed surfaces this decision names. It drives the engine directly (which keeps
   its `.active` convenience pointer); the MCP tools + window simply never consult it.
 
-**Test gate — met:** `make check` green (217 py @ 97.4%, hard_lint 5/5, 8 vitest, frontend build clean).
+**Test gate — met:** `make check` green (219 py @ 97.3%, hard_lint 5/5, 8 vitest, frontend build clean).
 New `tests/test_sessions.py` (open/resume, rename-follows, resolve, cursor advance); `test_server.py`
 + `test_app.py` thread sessions and prove *both* surfaces run one resolution path.
+
+**Follow-up landed (2026-07-11): window cursor-advance coherence (C5).** The window's edit routes
+(derive/isolate/undo/redo/goto/reset in `web/app.py`) resolved the session but never advanced its
+cursor — only the MCP tools did — so an agent sharing a session saw a stale `state_id`/`mask_id`
+after a human undo/derive. Fixed by lifting the `(session, workspace) → cursor` derivation out of
+`tools.core.advance` into `Sessions.advance_to(session, ws)` — the **one** place both addressed
+surfaces derive the cursor — and calling it after each window mutation. `web` reaches the session
+layer directly (never the FastMCP `tools.core`). Regression: `test_window_edit_advances_session_cursor`.
 
 **Parked to Phase 3 / deferred:** resume-*after-server-restart* (the ledger persists, but re-attaching a
 walked-away agent's session is part of C6 lifecycle cleanup — noted, not built); the cursor's

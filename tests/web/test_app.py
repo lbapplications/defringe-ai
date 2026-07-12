@@ -108,6 +108,23 @@ def test_reset_unknown_session_degrades(client):
     assert r.status_code == 200 and r.json()["ok"] is False
 
 
+def test_window_edit_advances_session_cursor(client):
+    """C5 — the window's edits (not just the MCP tools') advance the session cursor, so an agent
+    sharing the session with the human sees an up-to-date ``state_id``/``mask_id`` after a window
+    derive/undo. This was the half-kept-C5 gap: the routes resolved the session but never advanced
+    it. A ghost session on a mutating route must still no-op cleanly (the ``not name`` guard)."""
+    from defringe_ai.sessions import Sessions
+
+    c, home, name, s = client
+    sess = Sessions(home)
+    assert sess.get(s)["mask_id"] is None                      # no overlay yet → no mask cursor
+    c.post("/api/derive", json={"session": s, "op": "edge", "lo": 40, "hi": 120})
+    assert sess.get(s)["mask_id"] == "mask_0.png"              # derive pushed an overlay → cursor moved
+    c.post("/api/undo", json={"session": s})
+    assert sess.get(s)["mask_id"] is None                      # undo walked the overlay head back → cursor followed
+    assert c.post("/api/undo", json={"session": "ghost-session"}).json()["ok"]  # unknown session: no crash
+
+
 def test_build_state_and_sig_direct(loaded_home):
     home, name = loaded_home
     state = webapp.build_state(home)

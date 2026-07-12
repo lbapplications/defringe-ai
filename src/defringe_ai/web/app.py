@@ -213,6 +213,21 @@ def build_app(home: str) -> Starlette:
         print(f"[session] {name or '(unknown)'} ← {action}", flush=True)
         return name
 
+    def advance(body, name: str | None) -> None:
+        """Advance the window session's cursor to the asset's live HEADs after a mutation — the
+        window's half of "the server updates the session on **every** change" (C5). Routed through
+        :meth:`Sessions.advance_to`, the same derivation the MCP tools take, so an agent sharing a
+        session with the window never sees a stale cursor after a human undo/derive/reset. Best-
+        effort: a stale/unknown session or a missing workspace is a no-op, matching how the routes
+        already degrade. (``web`` reaches the session layer directly — never the FastMCP
+        ``tools.core`` — so importing the tool runtime here stays off the table.)"""
+        if not name:
+            return
+        try:
+            Sessions(home).advance_to(str(body.get("session", "")), Workspace.locate(name, home))
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            pass
+
     async def api_move(request):
         b = await request.json()
         Board(home).place(resolve(b, "move"), x=b.get("x"), y=b.get("y"), scale=b.get("scale"))
@@ -254,30 +269,41 @@ def build_app(home: str) -> Starlette:
         ws.apply("isolate", Geometry.fill_polygon_alpha, {"polygon": outline})
         ws.commit_edit()
         Board(home).record_pixel_edit(name, "isolate")   # image-level undo step
+        advance(body, name)
         return JSONResponse({"ok": True})
 
     async def api_undo(request):
-        Board(home).undo(resolve(await request.json(), "undo"))
+        b = await request.json()
+        name = resolve(b, "undo")
+        Board(home).undo(name)
+        advance(b, name)
         return JSONResponse({"ok": True})
 
     async def api_redo(request):
-        Board(home).redo(resolve(await request.json(), "redo"))
+        b = await request.json()
+        name = resolve(b, "redo")
+        Board(home).redo(name)
+        advance(b, name)
         return JSONResponse({"ok": True})
 
     async def api_goto(request):
         """Jump the asset to a chosen point on its history timeline (dropdown select)."""
         b = await request.json()
-        Board(home).goto(resolve(b, f"goto {b.get('index', 0)}"), int(b.get("index", 0)))
+        name = resolve(b, f"goto {b.get('index', 0)}")
+        Board(home).goto(name, int(b.get("index", 0)))
+        advance(b, name)
         return JSONResponse({"ok": True})
 
     async def api_reset(request):
         """Reset an asset: revert its pixels to the original open image, wipe its invisible
         mask layer (dots + outline), AND erase its per-image history — a clean slate."""
-        name = resolve(await request.json(), "reset")
+        b = await request.json()
+        name = resolve(b, "reset")
         if name is None:                                 # unknown/stale session → degrade like the siblings
             return JSONResponse({"ok": False, "error": "unknown session"})
         Workspace.locate(name, home).reset()
         Board(home).reset_history(name)
+        advance(b, name)
         return JSONResponse({"ok": True})
 
     async def api_connect(request):
@@ -317,6 +343,7 @@ def build_app(home: str) -> Starlette:
             img = Workspace.locate(name, home).current_array()
             ov = transparent(Transform.edge_detect(img, lo, hi))
             Board(home).push_overlay(name, ov, "edge → mask")
+            advance(body, name)
             return JSONResponse({"ok": True})
         # close / bridge need an existing overlay (the edge map) to transform
         try:
@@ -330,6 +357,7 @@ def build_app(home: str) -> Starlette:
             # connected-components filter runs on the overlay's alpha (the marks) directly
             k = int(body.get("keep", 1))
             Board(home).push_overlay(name, Transform.keep_largest(prev, keep=k), "keep largest")
+            advance(body, name)
             return JSONResponse({"ok": True})
         mark = np.maximum(prev[..., 0], prev[..., 3])         # recover white marks (RGB or alpha)
         work = np.zeros_like(prev)
@@ -343,6 +371,7 @@ def build_app(home: str) -> Starlette:
             Board(home).push_overlay(name, transparent(Transform.bridge_gaps(work, ml)), "bridge")
         else:
             return JSONResponse({"ok": False, "error": f"unknown op {op!r}"})
+        advance(body, name)
         return JSONResponse({"ok": True})
 
     async def mask_edge(request):
