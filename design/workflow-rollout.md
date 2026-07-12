@@ -94,17 +94,39 @@ walked-away agent's session is part of C6 lifecycle cleanup — noted, not built
 
 ---
 
-## Phase 3 — Projection, merge & backup *(the commit side, isolated)*
+## Phase 3 — Projection, merge & backup *(the commit side, isolated)* — ✅ DONE (2026-07-11)
 **In:** C7 live in-place projection onto the user's real file + `.bk` sidecar (write-if-absent) +
-locked base; C10 merge = "is this good?" approval + `backup/` ledger (`assets_backup`).
-
-**Parked (non-gating):** C9 on-disk mask-*nesting* (`state_<n>/mask_<n>.png`). The *behavior* it
-guarantees (joint undo) already ships from the existing engine; this is a storage reshape, safe to do
-as a follow-up.
+locked base; C10 merge = "is this good?" approval + `backup/` ledger.
 
 **Why last:** the only irreversible side effects in the whole system (writing the user's actual file)
 — quarantine them behind a fully-addressed, fully-tested state model, with the Phase-2 window letting
 you *watch* each projection land.
 
-**Test gate:** fake client-file in tmp; `.bk` write-if-absent; projection-after-every-op; merge
-archives old base + restores from the ledger. Tests never touch a real path.
+**As built (2026-07-11):**
+- **New `src/defringe_ai/projection.py`** (taxonomy shift — a new top-level module) — the ONE place
+  that writes *outside* the workspace `home`. `Projection(home, project_id, asset_id)` resolves the
+  real path via `Registry.real_path` and owns three files: the **real file** (byte-faithful mirror of
+  HEAD), the **`.bk` sidecar** (pristine original, write-if-absent), and the **`backup/` dir** (archived
+  approved bases — the directory listing *is* the commit ledger, no side JSON to desync). `project(ws)`
+  is a no-op when the real file is gone/legacy-dir-keyed or already holds HEAD (so a **mask-only change
+  writes nothing** — the mask never leaks onto the real file, C10). `merge(ws)` archives the current
+  base → ships HEAD → `collapse()`. `restore(ws, index)` returns a prior approved commit.
+- **Projection rides the existing choke points**, no new call sites: `tools.core.advance` (MCP) and the
+  `web/app.py` `advance()` closure (window) each already fire once per state change (C5 cursor) — both
+  now also project (C7). Best-effort: a stale session / missing file can't fail an edit (backups are the
+  safety net, not withholding the write). Every projection/merge logs a `[project]` line for `--watch`.
+- **New `merge` taxonomy category** (`tools/merge.py`): `merge(session)` (approval commit) +
+  `revert_merge(commit, session)` (cross-merge navigation), Pydantic `MergeResult`. CLI `merge` /
+  `revert_merge` (name-addressed, like the rest of the CLI). README + nomenclature ledger (`projection`
+  / `merge` / `commit`) + architecture layer + `tools.md` updated in the same change.
+- **Engine seams added** (small, single-homed): `Registry.real_path` (the one path pointing outside
+  `home`), `Workspace.base_path()` (what merge archives), `Workspace.reseed_base(src)` (restore a commit).
+
+**Parked (non-gating):** C9 on-disk mask-*nesting* (`state_<n>/mask_<n>.png`) — a storage reshape; the
+joint-undo *behavior* it guarantees already ships from the existing engine. Resume-after-server-restart
+(C6 lifecycle). And a **module-layout refactor** the growing cross-imports now warrant — see the status memo.
+
+**Test gate — met:** `make check-deterministic` green (234 py @ 97.4%, hard_lint 5/5, 8 vitest).
+New `tests/test_projection.py` (project/`.bk`/skip/merge/ledger/restore); `test_registry.py` (`real_path`),
+`test_workspace.py` (`base_path`/`reseed_base`), `test_server.py` (merge/revert tools + CLI), `test_app.py`
+(a window edit projects onto the real file). Every test mounts a tmp asset — no real path is touched.

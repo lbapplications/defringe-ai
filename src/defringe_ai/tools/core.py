@@ -23,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .. import imageops as ops
 from ..board import Board
+from ..projection import Projection
 from ..registry import Registry
 from ..sessions import Sessions
 from ..workspace import HOME as _DEFAULT_HOME
@@ -90,10 +91,22 @@ def workspace(session: str) -> tuple[str, Workspace]:
 
 
 def advance(session: str, ws: Workspace) -> None:
-    """Advance the session's cursor to ``ws``'s live HEADs — the server owning the cursor (C5).
-    Delegates to :meth:`Sessions.advance_to`, the one place the ``(session, workspace) → cursor``
-    derivation lives, so the MCP tools and the window can't drift apart. A no-op when nothing moved."""
+    """The post-change hook the tools fire after every mutation — two orthogonal reactions to
+    one state change:
+
+    1. **cursor** (C5): advance the session to ``ws``'s live HEADs via :meth:`Sessions.advance_to`,
+       the one place that derivation lives, so the MCP tools and the window can't drift apart.
+    2. **projection** (C7): mirror the new HEAD onto the user's real file, in place, live.
+
+    Both are no-ops when nothing actually moved. Projection is best-effort — a stale session or a
+    missing real file must not fail an edit; the backups (``.bk`` / ``backup/``) are the safety net,
+    not withholding the write."""
     Sessions(HOME).advance_to(session, ws)
+    try:
+        pid, aid = Sessions(HOME).resolve(session)
+        Projection(HOME, pid, aid).project(ws)
+    except (FileNotFoundError, ValueError, KeyError, OSError):
+        pass
 
 
 def apply(op: str, fn, session: str, **params) -> dict:

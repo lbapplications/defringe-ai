@@ -24,6 +24,8 @@ import threading
 from . import imageops as ops
 from . import tools
 from .board import Board
+from .projection import Projection
+from .registry import Registry
 from .tools import GATED, TAXONOMY, core, mcp
 # Re-export every tool as a module attribute, so the CLI, tests, and any caller can reach
 # `server.<tool>` exactly as before the split into tools/.
@@ -34,6 +36,7 @@ from .tools.isolate import clear_seeds, connect, cutout, isolate, outline, seed
 from .tools.manage import (
     collapse, export, list_shapes, list_workspaces, open_asset, redo, status, taxonomy, undo,
 )
+from .tools.merge import merge, revert_merge
 from .tools.session import cancel, commit, edit
 from .tools.shape import draw_line, draw_shape
 from .tools.transform import (
@@ -133,6 +136,13 @@ def main() -> None:
     ln.add_argument("--thickness", type=int, default=2)
     ln.add_argument("--dotted", action="store_true")
 
+    mg = sub.add_parser("merge", help="ship the current state to the user's real file (approved commit)")
+    mg.add_argument("workspace", nargs="?", default="", help="target workspace (default: active)")
+
+    rv = sub.add_parser("revert_merge", help="restore a previously approved commit onto the real file")
+    rv.add_argument("commit", type=int, help="a commit index from a prior merge's ledger")
+    rv.add_argument("workspace", nargs="?", default="", help="target workspace (default: active)")
+
     srv = sub.add_parser("serve", help="run the MCP server")
     srv.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
     srv.add_argument("--host", default="127.0.0.1")
@@ -224,6 +234,22 @@ def main() -> None:
                   f"{'dotted ' if args.dotted else ''}{args.color}")
         except ValueError as e:
             print(f"  REFUSED: {e}")
+    elif args.cmd in ("merge", "revert_merge"):
+        name = args.workspace or _get_active(HOME) or ""
+        loc = Registry(HOME).locate(name) if name else None
+        if not loc:
+            print("  REFUSED: no such workspace — open one first")
+        else:
+            pid, aid = loc
+            proj = Projection(HOME, pid, aid)
+            ws = Workspace.locate(name, HOME)
+            if args.cmd == "merge":
+                res = proj.merge(ws)
+                print(f"  merged '{name}' → {res['merged']} (commit {res['commit']}; ledger {res['commits']})")
+            else:
+                res = proj.restore(ws, args.commit)
+                print(f"  restored '{name}' ← commit {res['restored']} → {proj.real}")
+            _print(ws.status())
     else:  # serve (default)
         http = getattr(args, "http", False)
         preview = getattr(args, "preview", False)

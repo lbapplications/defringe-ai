@@ -417,3 +417,43 @@ def test_cli_serve_stdio_default(srv, monkeypatch):
     monkeypatch.setattr(srv.mcp, "run", lambda *a, **k: calls.setdefault("stdio", True))
     _run(srv, monkeypatch, [])                             # no subcommand → stdio serve
     assert calls.get("stdio") is True
+
+
+# --- merge (C10): ship approved work to the user's real file ----------------
+
+def test_merge_ships_to_real_file_then_reverts(app, asset_png):
+    """merge writes HEAD onto the real file as commit 0, collapses the chain, and stays
+    navigable: a second commit then revert_merge back to the first."""
+    import filecmp
+
+    srv, s = app
+    srv.edit("zero it", session=s)
+    srv.mark([[5, 5]], session=s)
+    srv.commit(session=s)
+    res = srv.merge(session=s)
+    assert os.path.samefile(res.merged, asset_png)          # the user's real file, in place
+    assert res.commit == 0 and res.commits == [0]
+    assert res.head == 0 and res.steps == 1                 # fine edit chain collapsed
+    ws = Workspace.locate("shark", srv.HOME)
+    assert filecmp.cmp(ws.current_path(), asset_png, shallow=False)
+    # a second approved commit, then step back to the first
+    srv.edit("more", session=s); srv.mark([[9, 9]], session=s); srv.commit(session=s)
+    assert srv.merge(session=s).commits == [0, 1]
+    back = srv.revert_merge(0, session=s)
+    assert back.commit == 0 and back.commits == [0, 1] and back.steps == 1
+
+
+def test_cli_merge_and_revert(srv, monkeypatch, asset_png, capsys):
+    _run(srv, monkeypatch, ["open", asset_png, "--name", "a"])
+    _run(srv, monkeypatch, ["edit", "zero", "a"])
+    _run(srv, monkeypatch, ["mark", "5,5", "a"])
+    _run(srv, monkeypatch, ["commit", "a"])
+    _run(srv, monkeypatch, ["merge", "a"])
+    assert "merged 'a'" in capsys.readouterr().out
+    _run(srv, monkeypatch, ["revert_merge", "0", "a"])
+    assert "restored 'a'" in capsys.readouterr().out
+
+
+def test_cli_merge_no_workspace_refused(srv, monkeypatch, capsys):
+    _run(srv, monkeypatch, ["merge"])                       # nothing open → guided refusal
+    assert "REFUSED" in capsys.readouterr().out

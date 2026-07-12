@@ -197,3 +197,19 @@ def test_derive_unknown_op_and_bad_asset(client):
 
 def test_web_package_reexport():
     assert web is not None
+
+
+def test_window_edit_projects_onto_real_file(client, asset_png):
+    """A pixel edit in the window (isolate) is projected onto the user's real file in place (C7),
+    same as an agent's edit — the window and the MCP share the projection path via advance()."""
+    import filecmp
+
+    c, home, name, s = client
+    for x, y in ([2, 2], [18, 2], [18, 18], [2, 18]):
+        c.post("/api/dot", json={"session": s, "x": x, "y": y})
+    c.post("/api/connect", json={"session": s})
+    c.post("/api/isolate", json={"session": s})
+    ws = Workspace.locate(name, home)
+    assert ws.status()["chain"][-1] == "isolate"
+    assert filecmp.cmp(ws.current_path(), asset_png, shallow=False)   # HEAD landed on the real file
+    assert os.path.exists(asset_png + ".bk")                          # pristine original preserved

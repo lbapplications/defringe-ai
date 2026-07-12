@@ -37,6 +37,7 @@ from starlette.staticfiles import StaticFiles
 
 from ..board import Board
 from ..history import History
+from ..projection import Projection
 from ..registry import Registry
 from ..sessions import Sessions
 from ..workspace import Workspace
@@ -214,18 +215,23 @@ def build_app(home: str) -> Starlette:
         return name
 
     def advance(body, name: str | None) -> None:
-        """Advance the window session's cursor to the asset's live HEADs after a mutation — the
-        window's half of "the server updates the session on **every** change" (C5). Routed through
-        :meth:`Sessions.advance_to`, the same derivation the MCP tools take, so an agent sharing a
-        session with the window never sees a stale cursor after a human undo/derive/reset. Best-
-        effort: a stale/unknown session or a missing workspace is a no-op, matching how the routes
-        already degrade. (``web`` reaches the session layer directly — never the FastMCP
-        ``tools.core`` — so importing the tool runtime here stays off the table.)"""
+        """The window's post-change hook — the same two reactions the MCP tools fire (see
+        ``tools.core.advance``): advance the session **cursor** (C5) and **project** the new HEAD
+        onto the user's real file, in place (C7). Both go through the shared layers
+        (:meth:`Sessions.advance_to`, :class:`~.projection.Projection`), so an agent sharing a
+        session with the window never sees a stale cursor, and a human edit lands on the real file
+        just like an agent's does. Best-effort: a stale/unknown session or missing workspace is a
+        no-op, matching how the routes already degrade. (``web`` reaches these layers directly —
+        never the FastMCP ``tools.core`` — so importing the tool runtime here stays off the table.)"""
         if not name:
             return
         try:
-            Sessions(home).advance_to(str(body.get("session", "")), Workspace.locate(name, home))
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            ws = Workspace.locate(name, home)
+            Sessions(home).advance_to(str(body.get("session", "")), ws)
+            loc = Registry(home).locate(name)
+            if loc:
+                Projection(home, *loc).project(ws)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError, OSError):
             pass
 
     async def api_move(request):

@@ -188,3 +188,12 @@ def test_adopt_legacy_dedupes_label_against_registered_asset(home, asset_png):
     assert adopted == ["shark-2"]                           # deduped, not dropped
     assert reg.dir_by_name("shark-2") == f"{home}/shark"    # the legacy dir is reachable
     assert reg.adopt_legacy() == []                         # still idempotent (by identity)
+
+
+def test_real_path_is_project_root_plus_relative(home, asset_png):
+    """real_path points OUTSIDE the workspace home — at the user's actual file (projection's target)."""
+    import os
+    reg = Registry(home)
+    m = reg.mount(asset_png, name="shark")
+    real = reg.real_path(m.project_id, m.asset_id)
+    assert os.path.samefile(real, asset_png)               # project root + relative asset path

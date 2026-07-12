@@ -58,7 +58,7 @@ takes/returns point lists). Tool classes import `utils` **only**, never each oth
 ## The gate (taxonomy of *behaviour*)
 
 The taxonomy — one module per category under `tools/` — groups the MCP tools: **session /
-transform / shape / annotate / isolate / arrange / workspace** (the `workspace` category is
+transform / shape / annotate / isolate / arrange / workspace / merge** (the `workspace` category is
 `tools/manage.py`, named to avoid clashing with the engine's `workspace.py`). **transform +
 shape + annotate MUTATE PIXELS and are GATED** (`gated=True` on the category) — they refuse
 unless an edit session is open (`core.apply` enforces it):
@@ -68,4 +68,7 @@ edit("<intent>")  →  [gated tools]  →  cancel() (restore)  |  commit() (keep
 ```
 
 `isolate` is compound and **self-contained** (opens/commits its own edit), so it's a
-separate category, not part of the gate. `arrange`/`workspace` run freely.
+separate category, not part of the gate. `arrange`/`workspace`/`merge` run freely. `merge`
+is the commit side (C10) — the only tools that write the user's *real* file as a deliberate
+act (the live projection during editing is automatic, in `core.advance`); its irreversible
+writes are quarantined in `projection.py`.

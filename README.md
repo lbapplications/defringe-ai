@@ -54,6 +54,8 @@ workspace/octopus/
 - **collapse** flattens the chain to the current image as the new base — *"verify, then
   collapse the edit chain to the verified asset"*
 - **export** writes `HEAD` out as the finished deliverable
+- **merge** ships `HEAD` onto the user's *real* file as an approved commit (the edit is also
+  **projected there live** as you go; `.bk` sidecar + backup ledger are the safety net)
 
 MCP tools (for the agent) and the CLI (for you) are thin front-ends over this — same
 workspace on disk.
@@ -221,6 +223,19 @@ same `mask.outline` slot, but derived straight from the pixels. So the pipeline 
 `key_background → outline → isolate` with no dots. What's still missing for *fully*-automatic
 isolation is sourcing the silhouette from an edge map (close gaps → fill) rather than a
 pre-made matte — see the roadmap.
+
+### Merge — ship approved work to the real file (the `merge` tools)
+
+While you edit, the current `HEAD` is **projected onto your actual file, in place, live** —
+same filename, only the bytes change, so any viewer you have open just updates. Safety is
+by backup, not by withholding the write: a **`.bk` sidecar** is dropped beside your file the
+first time it's touched (the pristine original, write-once), and the workspace keeps a locked
+base until you merge.
+
+| Tool | Does |
+|---|---|
+| **`merge`** ⭐ | ship the current state as an **approved commit** — *ask the user "is this good?" first; approval is the commit*. Writes `HEAD` onto their real file, archives the previous base into the backup ledger, and collapses the fine edit chain to this state. The **mask never ships** — only the flattened image |
+| `revert_merge [commit]` | step back to a previously approved commit — restore its image onto the real file and make it the working base (approved commits persist across later merges) |
 
 **Workspace / board controls:** `undo`, `redo` (per-image, two-level — see below),
 `status`, `collapse`, `export`, `move` (place an asset on the canvas), `select` (make an

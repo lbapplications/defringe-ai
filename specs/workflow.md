@@ -74,9 +74,12 @@ independent mask-undo would desync the selection from the pixels it already cut.
 ### C10 — `merge` is a per-asset approval.
 `merge` **ships the chosen state** (where the cursor sits). The agent **asks "is this good?"** first;
 approval *is* the commit. On approval: the chosen state is written to the user's file (same name) and
-becomes the new locked base; the previous base is archived into the `backup/` ledger; the fine
-`state_changes` collapse. **The mask never ships — only the flattened state does.** Across merges the
-user can still step **backward/forward between approved commits** via the backup ledger. [D17, D18, Q9]
+becomes the new locked base; **the approved state itself is archived into the `backup/` ledger as this
+commit** (so every approved state is retained — the pristine pre-everything original stays in `.bk`,
+not the commit ledger); the fine `state_changes` collapse. **The mask never ships — only the flattened
+state does.** Across merges the user can still step **backward/forward between approved commits** via
+the backup ledger — and because each commit is an *approved* state (not the base it replaced), stepping
+back never destroys the state you're leaving. [D17, D18, Q9]
 
 ---
 

@@ -188,6 +188,21 @@ class Workspace:
         self._write(m)
         return self.status()
 
+    def reseed_base(self, src: str) -> dict:
+        """Replace the whole edit chain with a single base step seeded (byte-faithful) from an
+        external PNG — how a merge-ledger commit is restored: the engine's lone base becomes those
+        bytes and HEAD points at it. Any prior chain snapshots are discarded."""
+        m = self._read()
+        for st in m["steps"]:
+            _rm(os.path.join(self.root, st["file"]))
+        os.makedirs(os.path.join(self.root, "history"), exist_ok=True)
+        base = os.path.join("history", "0000-base.png")
+        shutil.copy2(src, os.path.join(self.root, base))
+        m["steps"] = [{"op": "restored", "params": {}, "file": base, "ts": _now()}]
+        m["head"] = 0
+        self._write(m)
+        return self.status()
+
     # --- mask-overlay chain (the LAYER chain, sibling to the pixel chain) ---
 
     def _overlay(self, m: dict) -> dict:
@@ -262,7 +277,7 @@ class Workspace:
         for st in m["steps"][rh + 1:]:
             _rm(os.path.join(self.root, st["file"]))
         m["steps"] = m["steps"][: rh + 1]
-        m["head"] = rh
+        m["head"] = min(rh, len(m["steps"]) - 1)      # clamp: the chain may have shrunk (e.g. a collapse)
         m["session"] = {"active": False}
         self._write(m)
         _rm(os.path.join(self.root, "backup.png"))

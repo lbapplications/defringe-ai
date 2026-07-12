@@ -149,6 +149,13 @@ class Registry:
         """The storage directory of a (verified) asset."""
         return self.resolve(project_id, asset_id)["dir"]
 
+    def real_path(self, project_id: str, asset_id: str) -> str:
+        """The asset's **real** file on the user's disk — ``project_root / relative_path`` (both
+        verified). This is the ground-truth file projection writes onto in place (C7); everything
+        else lives under the workspace ``home``, this is the one path that points outside it."""
+        rec = self.resolve(project_id, asset_id)
+        return os.path.join(self._read()[project_id]["path"], rec["path"])
+
     def dir_by_name(self, name: str) -> str | None:
         """The storage directory of the asset labelled ``name`` (or None if unknown).
 

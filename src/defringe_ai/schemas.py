@@ -31,6 +31,17 @@ class IsolateResult(BaseModel):
     chain: list[str] = Field(description="The ordered op names in the edit chain.")
 
 
+class MergeResult(BaseModel):
+    """The result of shipping an approved state to the user's real file (a commit, C10)."""
+
+    workspace: str = Field(description="The asset that was merged.")
+    merged: str = Field(description="The user's real file the approved state was written onto (in place).")
+    commit: int = Field(description="Index of this commit in the cross-merge backup ledger.")
+    commits: list[int] = Field(description="Every approved-commit index now in the ledger (restorable).")
+    head: int = Field(description="Index of the current step — 0 after the fine edit chain collapses.")
+    steps: int = Field(description="Total steps in the edit chain (1 right after a merge).")
+
+
 class EdgeDetectTuneResult(BaseModel):
     """One step of the agent-in-the-loop edge-detection threshold search (binary search over
     the Canny hysteresis level). While `done` is False, LOOK at `current`, judge it, and call

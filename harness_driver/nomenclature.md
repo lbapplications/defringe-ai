@@ -53,6 +53,9 @@ name to a library we might swap.
 | **defringe** | erode + burn the matte rim. **fringe/matte rim** = the halo it removes. |
 | **memento** | one entry in the mask's undo timeline; carries `pixel_head` **and** `overlay_head` to bind the pixel + overlay chains. |
 | **overlay** / **layer chain** | a versioned mask-overlay raster (edge/hull/simplify) snapshotted per step; `overlay_head` points at the current version. Not "the mask" (that's the dots+outline), not a single file. |
+| **projection** | mirroring the current HEAD onto the user's **real file**, in place, live (C7). Not "save", "sync", "write-back". |
+| **merge** | shipping a chosen state as an **approved commit** to the real file (C10) — approval *is* the commit. Not "publish", "apply", "finalize". |
+| **commit** (n.) | one approved merged state in the backup ledger (`backup/asset_<n>.png`), navigable across merges. Not "version", "revision" (those are edit-chain steps). |
 
 Add a term here the moment a new concept earns a name — before it picks up three synonyms
 across the code.

@@ -211,3 +211,20 @@ def test_export(opened, tmp_path):
     import os
 
     assert os.path.exists(dest)
+
+
+def test_reseed_base_replaces_chain_from_external_png(opened, tmp_path):
+    """reseed_base replaces the whole chain with a single base from an external PNG (how a
+    merge-ledger commit is restored)."""
+    import numpy as np
+    from PIL import Image
+
+    home, name = opened
+    ws = Workspace.resolve(name, home)
+    ws.apply("zero", lambda a: np.zeros_like(a), {})       # HEAD now differs from the base
+    assert ws.head() == 1
+    seed = str(tmp_path / "seed.png")
+    Image.fromarray(np.full((8, 8, 4), 7, np.uint8), mode="RGBA").save(seed)
+    st = ws.reseed_base(seed)
+    assert st["head"] == 0 and st["chain"] == ["restored"] and st["steps"] == 1
+    assert ws.current_array().shape == (8, 8, 4)           # the reseeded bytes are now the base

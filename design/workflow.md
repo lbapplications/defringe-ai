@@ -142,7 +142,12 @@ pair that never existed together.
 - `merge` **ships the chosen state** (the pixel state the cursor is parked on). The agent **asks the
   user "is this good?"** first — approval *is* the commit.
 - On approval: the chosen state is written to the user's file (same name) and becomes the new
-  `asset.png` base; the previous base is archived into `backup/` and appended to `assets_backup`;
-  the fine `state_changes` collapse (session's asset work is done). The **mask never ships** — only
-  the flattened state does.
-- Cross-merge, the user can still move **backward/forward between approved commits** via `assets_backup`.
+  `asset.png` base; **the approved state is archived into `backup/` as `asset_<n>.png` — this commit**
+  (the pristine original stays in the `.bk` sidecar, not the commit ledger); the fine `state_changes`
+  collapse (session's asset work is done). The **mask never ships** — only the flattened state does.
+- Cross-merge, the user can still move **backward/forward between approved commits** via the `backup/`
+  ledger. Archiving the *approved* state (not the base it replaced) keeps this lossless: stepping back
+  to an earlier commit never destroys the one you're leaving — every approved state stays restorable.
+- **As built (Phase 3):** the ledger is the `backup/` directory listing itself (`asset_<n>.png`), not a
+  side JSON — so it can't desync from the bytes. It folds into `history.json.assets_backup` when the
+  parked C9 storage reshape lands.

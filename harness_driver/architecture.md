@@ -19,6 +19,9 @@ frontend/     the edit screen's UI: a Vite + React + Konva app (see frontend.md)
    │
    ├── identity.py   deterministic uuid5 project/asset ids + the png intake gate (C3/C8)
    ├── registry.py   the projects.json MOUNT TABLE: path↔id↔dir, resume-on-reopen, adopt_legacy
+   ├── projection.py the ONLY irreversible EXTERNAL writes: mirror HEAD onto the user's real
+   │                 file in place (C7) + `.bk` sidecar + the backup/ commit ledger / merge (C10).
+   │                 Quarantined here so workspace/registry/sessions never write outside `home`.
    ├── board.py      the ARRANGEMENT: per-asset x/y/scale, z-order (ordered list,
    │                 Konva-style — not a growing counter), selection, the invisible
    │                 MASK layer (dots/outline/lock), and per-image undo (via history.py)
