@@ -6,6 +6,7 @@ import { type Asset, post } from "./state";
 
 type Props = {
   assets: Asset[];
+  select: (session: string) => void;    // optimistic select (App owns the override + POST)
   tool: "move" | "dot";
   showImg: boolean;
   showMask: boolean;
@@ -15,7 +16,7 @@ type Props = {
 // Transformer bound to the selected asset for native resize. Drag + resize come from
 // Konva itself — no hand-rolled mouse math. Server state (via SSE) is the source of truth;
 // gestures POST their result and the stream reconciles.
-export default function Canvas({ assets, tool, showImg, showMask }: Props) {
+export default function Canvas({ assets, select, tool, showImg, showMask }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const nodes = useRef(new Map<string, Konva.Group>());
@@ -50,6 +51,13 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
     tr.nodes(node ? [node] : []);
     tr.forceUpdate();
     tr.getLayer()?.batchDraw();
+    // Draw again next frame: on a fresh selection the target node may not have painted yet, so
+    // the handles' box computes empty and nothing shows until the next redraw (previously: a drag).
+    const raf = requestAnimationFrame(() => {
+      tr.forceUpdate();
+      tr.getLayer()?.batchDraw();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [selected, tool, assets, optScale]);
 
   // Drop each optimistic scale once the server's pushed a.scale matches it (gesture landed).
@@ -81,7 +89,7 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
   }
 
   function onBackgroundClick(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (e.target === e.target.getStage()) post("/api/select", { session: "" });
+    if (e.target === e.target.getStage()) select("");
   }
 
   return (
@@ -98,7 +106,7 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
                 showImg={showImg}
                 showMask={showMask}
                 scaleOverride={optScale[a.session]}
-                onSelect={(session) => post("/api/select", { session })}
+                select={select}
                 nodeRef={registerNode}
               />
             ))}

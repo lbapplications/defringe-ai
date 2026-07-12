@@ -197,9 +197,9 @@ def build_app(home: str) -> Starlette:
                 if sig != last:
                     last = sig
                     yield f"data: {json.dumps(state)}\n\n"
-                elif (beat := beat + 1) % 40 == 0:
+                elif (beat := beat + 1) % 100 == 0:
                     yield ": hb\n\n"
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.15)               # echo floor: how fast a POST's result reaches the tab
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

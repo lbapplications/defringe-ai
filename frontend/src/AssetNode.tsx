@@ -12,14 +12,14 @@ type Props = {
   // Optimistic scale held during a resize gesture until the server echoes it back over SSE
   // (see Canvas). When set it overrides a.scale so the image doesn't snap back and wait.
   scaleOverride?: number;
-  onSelect: (session: string) => void;
+  select: (session: string) => void;     // optimistic select (App owns the override + POST)
   nodeRef: (session: string, node: Konva.Group | null) => void;
 };
 
 // One board asset: the image plus its mask overlay (seed dots + derived outline), all in
 // one Konva Group. The group carries position; the image is drawn at its display size and
 // mask geometry is mapped image-space -> display-space so dots/outline ride with it.
-export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, onSelect, nodeRef }: Props) {
+export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, select, nodeRef }: Props) {
   const [image] = useImage(`/img/${a.session}/${a.head}?v=${encodeURIComponent(a.rev)}`);
   // The edge-map overlay (green edges on transparency) rides on top under the mask view.
   const [edgeImage] = useImage(a.edge ? `/mask/${a.session}?v=${encodeURIComponent(a.edge_rev)}` : "");
@@ -44,14 +44,16 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
     const x = Math.round(p.x / s);
     const y = Math.round(p.y / s);
     if (x < 0 || y < 0 || x > a.w || y > a.h) return;
-    if (!a.selected) post("/api/select", { session: a.session });
+    if (!a.selected) select(a.session);
     post("/api/dot", { session: a.session, x, y });
     e.cancelBubble = true;
   }
 
   function onClick(e: Konva.KonvaEventObject<MouseEvent>) {
+    // In move mode selection already happened on mouseDown (which also fires before a drag,
+    // where no click event follows) — re-posting here just doubled every select. Dot mode
+    // still routes the click to dot placement.
     if (tool === "dot") return placeDot(e);
-    post("/api/select", { session: a.session });
   }
 
   function onDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
@@ -64,7 +66,7 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
       x={a.x}
       y={a.y}
       draggable={draggable}
-      onMouseDown={() => onSelect(a.session)}
+      onMouseDown={() => { if (!a.selected) select(a.session); }}
       onClick={onClick}
       onTap={onClick}
       onDragEnd={onDragEnd}
@@ -72,6 +74,13 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
       {/* hit area so clicks land even where the image is transparent */}
       <Rect width={dispW} height={dispH} />
       {showImg && image && <KImage image={image} width={dispW} height={dispH} listening={false} />}
+      {/* Selection highlight — DECLARATIVE (driven by a.selected), so optimistic selection paints
+          it instantly on the normal render cycle. The Transformer's resize handles are bound
+          imperatively via batchDraw and don't reliably appear until the layer next redraws (a
+          drag), so they can't be the only "you selected this" feedback. */}
+      {a.selected && (
+        <Rect width={dispW} height={dispH} stroke="#4c9aff" strokeWidth={2} dash={[6, 4]} listening={false} />
+      )}
       {showMask && a.edge && edgeImage && (
         <KImage image={edgeImage} width={dispW} height={dispH} listening={false} />
       )}

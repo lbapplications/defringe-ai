@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Canvas from "./Canvas";
 import Toolbox from "./Toolbox";
 import { post, useBoard } from "./state";
@@ -7,10 +7,31 @@ import { post, useBoard } from "./state";
 // the board over SSE, and composes the toolbox (controls) with the canvas (view). All
 // board/edit state lives on the server; this component holds none of it.
 export default function App() {
-  const assets = useBoard();
+  const board = useBoard();
   const [tool, setTool] = useState<"move" | "dot">("move");
   const [showImg, setShowImg] = useState(true);
   const [showMask, setShowMask] = useState(true);
+
+  // Optimistic selection: a click must feel instant, but `selected` only lands when the
+  // server echoes state back over SSE (~0.15s+). So we override it locally the moment the
+  // user clicks and defer to the server again once its push agrees — the same reconcile the
+  // resize gesture uses for optScale. null = no override (trust the server); a session id
+  // (or "" for a background deselect) = show this as selected until the stream confirms it.
+  const [optSel, setOptSel] = useState<string | null>(null);
+  const assets = useMemo(
+    () => (optSel === null ? board : board.map((a) => ({ ...a, selected: a.session === optSel }))),
+    [board, optSel],
+  );
+  useEffect(() => {
+    if (optSel === null) return;
+    const serverSel = board.find((a) => a.selected)?.session ?? "";
+    if (serverSel === optSel) setOptSel(null);          // server caught up → drop the override
+  }, [board, optSel]);
+
+  const select = useCallback((session: string) => {
+    setOptSel(session);                                 // highlight now
+    post("/api/select", { session });                  // …tell the server, SSE reconciles
+  }, []);
 
   // keyboard undo/redo on the selected asset (Ctrl/Cmd+Z, +Shift for redo)
   useEffect(() => {
@@ -43,7 +64,7 @@ export default function App() {
         setShowMask={setShowMask}
       />
       <main className={"stage-wrap" + (tool === "dot" ? " tool-dot" : "")}>
-        <Canvas assets={assets} tool={tool} showImg={showImg} showMask={showMask} />
+        <Canvas assets={assets} select={select} tool={tool} showImg={showImg} showMask={showMask} />
       </main>
     </>
   );

@@ -154,6 +154,7 @@ class Board:
         Registry(self.home).adopt_legacy()             # pull any pre-identity flat dirs into the table
         names = Workspace.list_all(self.home)
         b = self._read()
+        before = json.dumps(b, sort_keys=True)          # detect a real change so an idle poll never rewrites
         for name in names:
             if name not in b["assets"]:
                 b["assets"][name] = _seed_from_manifest(self.home, name) or _staggered(len(b["order"]))
@@ -167,7 +168,8 @@ class Board:
             _ensure_layers(a)
         if b["selected"] not in names:
             b["selected"] = b["order"][-1] if b["order"] else None
-        self._write(b)
+        if json.dumps(b, sort_keys=True) != before or not os.path.exists(self.path):
+            self._write(b)                              # skip the disk write when nothing moved (idle SSE polls)
         return b
 
     # --- mutations ---------------------------------------------------------
