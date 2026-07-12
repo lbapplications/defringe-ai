@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from .. import imageops as ops
 from ..board import Board
-from ..workspace import Workspace, _get_active
+from ..sessions import Sessions
+from ..workspace import Workspace
 from . import core
 
 manage = core.category("workspace")
@@ -16,22 +17,25 @@ manage = core.category("workspace")
 
 @manage
 def open_asset(path: str, name: str = "") -> dict:
-    """Copy an external asset into a workspace and make it the active edit target.
-    Open several (each gets a name, defaulting to the filename) and shape them in
-    parallel — address any by its `name`, or omit `name` on later tools to keep
-    working the one you touched last."""
+    """Mount an external asset and open an edit **session** on it — the entry point every other
+    tool needs. Returns the workspace status plus a `session` id: carry that id into edit(),
+    the transforms, move(), etc. so the server knows which asset you mean (there is no ambient
+    'current asset'). Open several assets — each gets its own session — and shape them in
+    parallel; `name` is just a human label (defaults to the filename), never the address."""
     ws = Workspace.open_asset(path, core.HOME, name or None)
     st = ws.status()
     if ws.renamed_from:                               # resume renamed the label — carry board state over
         Board(core.HOME).rename(ws.renamed_from, st["workspace"])
     Board(core.HOME).select(st["workspace"])          # new asset lands selected, on top
-    return st
+    session = core.open_session(st["workspace"])      # mount → session handle (C6)
+    core.advance(session, ws)                          # seed the cursor at the opened state
+    return {**st, "session": session}
 
 
 @manage
 def list_workspaces() -> dict:
-    """List every open workspace and which one is currently active."""
-    return {"workspaces": Workspace.list_all(core.HOME), "active": _get_active(core.HOME)}
+    """List every open workspace and its live session id (the token to address it with)."""
+    return {"workspaces": Workspace.list_all(core.HOME), "sessions": Sessions(core.HOME).by_name()}
 
 
 @manage
@@ -48,30 +52,39 @@ def list_shapes() -> dict:
 
 
 @manage
-def status(workspace: str = "") -> dict:
+def status(session: str = "") -> dict:
     """Current workspace state: HEAD, the edit chain, can_undo/redo, current file."""
-    return Workspace.resolve(workspace, core.HOME).status()
+    return core.workspace(session)[1].status()
 
 
 @manage
-def undo(workspace: str = "") -> dict:
+def undo(session: str = "") -> dict:
     """Step HEAD back one edit. Reversible; redo is still available."""
-    return Workspace.resolve(workspace, core.HOME).undo()
+    _, ws = core.workspace(session)
+    st = ws.undo()
+    core.advance(session, ws)
+    return st
 
 
 @manage
-def redo(workspace: str = "") -> dict:
+def redo(session: str = "") -> dict:
     """Step HEAD forward one edit (after an undo)."""
-    return Workspace.resolve(workspace, core.HOME).redo()
+    _, ws = core.workspace(session)
+    st = ws.redo()
+    core.advance(session, ws)
+    return st
 
 
 @manage
-def collapse(workspace: str = "") -> dict:
+def collapse(session: str = "") -> dict:
     """Verify: flatten the edit chain to the current image as the new base asset."""
-    return Workspace.resolve(workspace, core.HOME).collapse()
+    _, ws = core.workspace(session)
+    st = ws.collapse()
+    core.advance(session, ws)
+    return st
 
 
 @manage
-def export(dest: str, workspace: str = "") -> dict:
+def export(dest: str, session: str = "") -> dict:
     """Write the current image out to a path — the finished deliverable."""
-    return Workspace.resolve(workspace, core.HOME).export(dest)
+    return core.workspace(session)[1].export(dest)

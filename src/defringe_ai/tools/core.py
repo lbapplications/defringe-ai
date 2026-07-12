@@ -8,6 +8,13 @@ Ask a module "what tools do you own?" and the answer is the functions it decorat
 
 `gated` tools (they MUTATE PIXELS) refuse unless an edit session is open — enforced by
 :func:`apply` / an inline ``in_session`` check, reported by the taxonomy.
+
+**Addressing is session-scoped (Phase 2, C2/C5).** There is no ambient "current asset": every
+tool names its target with an opaque ``session`` id (minted by ``open_asset``), and the server
+resolves it — ``session → (project_id, asset_id) → name`` — then drives the still-name-keyed
+board/workspace under it. The old "omit it and act on the last one touched" sugar is gone; a
+blank/unknown session is a loud, guided error. The server also **owns the cursor**: every applied
+edit advances the session (:func:`advance`), so ``--watch`` shows the session layer working.
 """
 
 from __future__ import annotations
@@ -16,8 +23,10 @@ from mcp.server.fastmcp import FastMCP
 
 from .. import imageops as ops
 from ..board import Board
+from ..registry import Registry
+from ..sessions import Sessions
 from ..workspace import HOME as _DEFAULT_HOME
-from ..workspace import Workspace, _get_active
+from ..workspace import Workspace
 
 # The workspace root every tool acts on. Mutable at runtime (tests point it at a tmp home);
 # tools read it live as ``core.HOME``, so there's a single source of truth to repoint.
@@ -54,24 +63,59 @@ def gated_set() -> set[str]:
     return set(_GATED)
 
 
-# --- resolution + the edit gate (shared by the tool modules) ---------------
+# --- session resolution + the edit gate (shared by the tool modules) -------
 
-def name(workspace: str) -> str:
-    """Resolve a board asset label: the given one, or the active workspace."""
-    return workspace or _get_active(HOME) or ""
+def open_session(name: str) -> str:
+    """Open (or resume) a session on the asset labelled ``name`` → its ``session`` id. Called by
+    ``open_asset`` and the window's per-asset mount. Resolves the label to identity through the
+    registry, so the session is bound to ``(project_id, asset_id)`` — not the mutable label."""
+    loc = Registry(HOME).locate(name)
+    if not loc:
+        raise ValueError(f"no asset labelled {name!r} to open a session on")
+    pid, aid = loc
+    return Sessions(HOME).open(pid, aid, name).id
 
 
-def apply(op: str, fn, workspace: str, **params) -> dict:
-    """Apply a pixel-mutating op — but only inside an edit session (the gate)."""
-    ws = Workspace.resolve(workspace, HOME)
+def name(session: str) -> str:
+    """A ``session`` id → the asset's current display label. Raises (with guidance) on a
+    blank or unknown session — there is no ambient fallback (C2)."""
+    return Sessions(HOME).name_of(session)
+
+
+def workspace(session: str) -> tuple[str, Workspace]:
+    """A ``session`` id → ``(name, Workspace)``. The read path a tool takes to reach the engine
+    below the session layer, without touching the (retired) active pointer."""
+    nm = name(session)
+    return nm, Workspace.locate(nm, HOME)
+
+
+def advance(session: str, ws: Workspace) -> None:
+    """Advance the session's cursor to ``ws``'s live HEADs — the server owning the cursor (C5).
+    The pixel state maps to ``state_<head>``; the mask/overlay maps to ``mask_<overlay_head>.png``
+    (None when the asset carries no overlay). A no-op when nothing moved."""
+    oh = ws.overlay_head()
+    Sessions(HOME).advance(
+        session,
+        state_id=f"state_{ws.head()}",
+        mask_id=f"mask_{oh}.png" if oh >= 0 else None,
+    )
+
+
+def apply(op: str, fn, session: str, **params) -> dict:
+    """Apply a pixel-mutating op on a session's asset — but only inside an edit session (the
+    gate) — then advance the session cursor."""
+    nm, ws = workspace(session)
     if not ws.in_session():
         raise ValueError(
             f"'{op}' is gated: this asset has no active edit session. "
             f'Call edit("<what you want to change>") first, then apply {op}; '
             f"cancel() to revert or commit() to keep."
         )
-    return ws.apply(op, fn, params)
+    st = ws.apply(op, fn, params)
+    advance(session, ws)
+    return st
 
 
-__all__ = ["mcp", "HOME", "category", "taxonomy_map", "gated_set", "name", "apply",
-           "ops", "Board", "Workspace", "_get_active"]
+__all__ = ["mcp", "HOME", "category", "taxonomy_map", "gated_set",
+           "open_session", "name", "workspace", "advance", "apply",
+           "ops", "Board", "Workspace", "Sessions", "Registry"]

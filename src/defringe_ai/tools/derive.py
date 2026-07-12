@@ -12,17 +12,17 @@ derive = core.category("derive")
 
 
 @derive
-def edge_detect(lo: int = 100, hi: int = 200, workspace: str = "") -> dict:
+def edge_detect(lo: int = 100, hi: int = 200, session: str = "") -> dict:
     """[derive] Edge map (Canny) laid down as a **mask overlay**, not a pixel edit — the
     original image is untouched and stays HEAD. `lo`/`hi` are the hysteresis thresholds
     (100/200 classic; lower them to catch fainter edges, raise to keep only strong ones).
     The edges are swept into a vivid, transparency-keyed overlay (matrix_sweep) that rides
     on top of the image under the mask view. The edge *signal*, not an isolation; undo
     clears the overlay."""
-    name = core.name(workspace)
-    if not name:
-        raise ValueError("no active workspace — open an asset first")
-    return _edge_detect_apply(name, lo, hi)
+    name, ws = core.workspace(session)
+    st = _edge_detect_apply(name, lo, hi)
+    core.advance(session, ws)
+    return st
 
 
 def _edge_overlay(img, lo: int, hi: int):
@@ -38,8 +38,9 @@ def _edge_detect_apply(name: str, lo: int, hi: int) -> dict:
     OVERLAY VERSION (thin negative lines, transparency-keyed via matrix_sweep). The image is
     untouched — the original stays HEAD; the overlay is snapshotted into the asset's overlay
     chain and recorded as one timeline step, so the edit screen shows it under the mask view
-    and undo restores the exact prior overlay (or none)."""
-    ws = Workspace.resolve(name, core.HOME)
+    and undo restores the exact prior overlay (or none). Takes a `name` (not a session) so the
+    CLI edge_detect path can share it."""
+    ws = Workspace.locate(name, core.HOME)
     Board(core.HOME).push_overlay(name, _edge_overlay(ws.current_array(), lo, hi), "edge → mask")
     return ws.status()
 
@@ -92,7 +93,7 @@ def _tune_commit(ws: Workspace, name: str, state: dict) -> EdgeDetectTuneResult:
 
 
 @derive
-def edge_detect_tune(verdict: str = "", workspace: str = "") -> EdgeDetectTuneResult:
+def edge_detect_tune(verdict: str = "", session: str = "") -> EdgeDetectTuneResult:
     """[derive] Adaptive edge detection — find the threshold by LOOKING, not guessing. Call with no
     verdict to start: it renders the mid-range edge map and asks a question. You look at the
     result and call again with `verdict`: 'reduce' (too many / noisy edges → the search
@@ -101,10 +102,7 @@ def edge_detect_tune(verdict: str = "", workspace: str = "") -> EdgeDetectTuneRe
     so it converges in at most 3 probes (or after 2 'more' verdicts). The winning edge map is
     committed in place; `undo` restores the original. This is the repo's loop in one tool:
     the tool owns the search, you own the judgement."""
-    name = core.name(workspace)
-    if not name:
-        raise ValueError("no active workspace — open an asset first")
-    ws = Workspace.resolve(name, core.HOME)
+    name, ws = core.workspace(session)
     state = ws.scratch_get(_TUNE_KEY)
 
     # start (or restart) — verdict ignored when there's no live search

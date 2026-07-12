@@ -40,9 +40,9 @@ New: `tests/test_identity.py`, `tests/test_registry.py`.
 
 ---
 
-## Phase 2 — Sessions, mount & canvas-as-harness *(unify the two surfaces)*
+## Phase 2 — Sessions, mount & canvas-as-harness *(unify the two surfaces)* — ✅ DONE
 **In:** C5/C6 session layer — opaque `session_id`, `sessions.json`/`working_session.json`, lazy-mount
-+ resume, server owns the cursor; swap the ~15 MCP tools from `workspace:str` → `session_id`; **route
++ resume, server owns the cursor; swapped all ~31 MCP tools from `workspace:str` → `session_id`; **routed
 the canvas through the same mount/session layer.**
 
 **Why second:** sessions sit on identity; the canvas can only share the path once the path exists.
@@ -50,12 +50,39 @@ Landing the canvas here is deliberate — from this point the existing `TestClie
 exercise the headless contract *for free*, and the live `--watch` window becomes a watchable
 integration test for Phase 3.
 
-**Decision this phase forces:** window keeps ambient-selection *sugar over sessions* (leaning) vs.
-fully addressed state (no implicit current). Pick before building; capture the call into
-[`specs/workflow.md`](../specs/workflow.md).
+**Decision (made 2026-07-11): fully session-addressed.** The window carries no ambient "current
+asset" — every action names its `session_id` end-to-end, same as the MCP tools. This costs a bigger
+`state.ts`/frontend rekey than ambient-sugar-over-sessions, but buys one resolution path with no
+implicit-current corner cases (the Phase-1 rename→board-migration fix was a symptom of label-keyed
+ambient state; sessions retire it rather than paper over it). The `name` label survives only as a
+human-readable display field, never as the addressing key.
 
-**Test gate:** session create/resume; resume-after-server-restart; the `/api/*` suite now proving
-*both* surfaces run one resolution path.
+**As built (2026-07-11):**
+- `src/defringe_ai/sessions.py` — the `Sessions` store: `session/working_session.json` (active set) +
+  `sessions.json` (ledger); `open` mints/**resumes** one handle per asset (keyed on identity, not the
+  mutable label, so it survives a rename); `name_of` resolves live through the registry; `advance` is
+  the server-owned cursor (`state_<head>` + `mask_<overlay_head>.png`). Every open/resume/advance
+  **logs** `[session] …` so a live `--watch` run *shows* the layer working.
+- `tools/core.py` — session-addressed resolution (`open_session`, `name`, `workspace`, `advance`,
+  gated `apply`); no ambient fallback — a blank/unknown session is a guided error.
+- All tool modules swapped `workspace:str` → `session:str`; `open_asset` returns `session`;
+  `list_workspaces` returns the label→session map (no more `active`).
+- `web/app.py` — the canvas mounts through `_session_for`/`_name_for`; `/api/*` + `/img/{session}/{i}`
+  + `/mask/{session}` all address by session; `build_state` emits `session` per asset.
+- Frontend — `state.ts` `Asset` gains `session`; every component POSTs `session` and fetches images by
+  it; `name` is display-only.
+- **The CLI stays name-addressed** — deliberately: it's the local human debug loop (C1 scaffolding),
+  not one of the two addressed surfaces this decision names. It drives the engine directly (which keeps
+  its `.active` convenience pointer); the MCP tools + window simply never consult it.
+
+**Test gate — met:** `make check` green (217 py @ 97.4%, hard_lint 5/5, 8 vitest, frontend build clean).
+New `tests/test_sessions.py` (open/resume, rename-follows, resolve, cursor advance); `test_server.py`
++ `test_app.py` thread sessions and prove *both* surfaces run one resolution path.
+
+**Parked to Phase 3 / deferred:** resume-*after-server-restart* (the ledger persists, but re-attaching a
+walked-away agent's session is part of C6 lifecycle cleanup — noted, not built); the cursor's
+`state_id`/`mask_id` currently mirror the live workspace HEADs rather than the on-disk nested
+`state_<n>/mask_<n>.png` storage, which Phase 3 reshapes.
 
 ---
 

@@ -1,6 +1,11 @@
 """server.py — the MCP tools + the CLI, both over an isolated tmp HOME (the `srv` fixture
 points server.HOME at tmp). Tools are plain functions under the official-SDK @mcp.tool(),
-so we call them directly."""
+so we call them directly.
+
+The tools are **session-addressed** (Phase 2, C2): open_asset returns a `session` id and every
+other tool names its target with it — there is no ambient "current asset". The `app` fixture
+opens one asset and hands back ``(srv, session)``. The CLI half stays name-addressed (it drives
+the engine directly — the local human debug loop, not one of the addressed surfaces)."""
 
 from __future__ import annotations
 
@@ -13,66 +18,97 @@ from defringe_ai.workspace import Workspace
 
 @pytest.fixture
 def app(srv, asset_png):
-    """server module with one asset opened + active."""
-    srv.open_asset(asset_png, name="shark")
-    return srv
+    """server module + the session of one opened asset → (srv, session)."""
+    st = srv.open_asset(asset_png, name="shark")
+    return srv, st["session"]
 
 
 # --- discovery / workspace listing -----------------------------------------
 
+def test_open_asset_returns_a_session(app):
+    srv, s = app
+    assert isinstance(s, str) and s                          # open_asset hands back a session id
+    assert srv.status(session=s)["workspace"] == "shark"
+
+
 def test_taxonomy_and_list(app):
-    tax = app.taxonomy()
+    srv, s = app
+    tax = srv.taxonomy()
     assert "edge_detect" in tax["categories"]["derive"]
-    assert set(app.GATED) == set(tax["gated"])
-    ls = app.list_workspaces()
-    assert ls["active"] == "shark" and "shark" in ls["workspaces"]
+    assert set(srv.GATED) == set(tax["gated"])
+    ls = srv.list_workspaces()
+    assert "shark" in ls["workspaces"]
+    assert ls["sessions"]["shark"] == s                      # the label → session reverse map
 
 
 def test_list_shapes(app):
-    s = app.list_shapes()
+    srv, _ = app
+    s = srv.list_shapes()
     assert "circle" in s["shapes"] and "center" in s["anchors"]
+
+
+def test_tool_without_a_session_raises(srv):
+    """No ambient current asset: a tool called with a blank session is a guided error."""
+    with pytest.raises(ValueError, match="needs a session"):
+        srv.status()
 
 
 # --- session gate ----------------------------------------------------------
 
 def test_gate_refuses_then_allows(app):
-    with pytest.raises(ValueError):
-        app.mark([[5, 5]])                     # gated: no session
-    app.edit("draw a dot")
-    st = app.mark([[5, 5]], radius=2)
+    srv, s = app
+    with pytest.raises(ValueError, match="gated"):
+        srv.mark([[5, 5]], session=s)                        # session known, but no edit session
+    srv.edit("draw a dot", session=s)
+    st = srv.mark([[5, 5]], radius=2, session=s)
     assert st["marked"] == 1
-    app.commit()
-    assert Workspace.active(app.HOME).status()["head"] == 1
+    srv.commit(session=s)
+    assert Workspace.active(srv.HOME).status()["head"] == 1
 
 
 def test_cancel_restores(app):
-    app.edit("scratch")
-    app.mark([[5, 5]])
-    app.cancel()
-    assert Workspace.active(app.HOME).status()["head"] == 0
+    srv, s = app
+    srv.edit("scratch", session=s)
+    srv.mark([[5, 5]], session=s)
+    srv.cancel(session=s)
+    assert Workspace.active(srv.HOME).status()["head"] == 0
 
 
 def test_transform_tools_through_the_gate(app):
     """Each gated transform MCP wrapper, once, inside a session."""
-    app.edit("run the transforms")
-    assert app.key_background(bg="white")["chain"][-1] == "key_background"
-    assert app.defringe(erode_px=1)["chain"][-1] == "defringe"
-    assert app.trim_alpha()["chain"][-1] == "trim_alpha"
-    assert app.crop(0, 0, 10, 10)["chain"][-1] == "crop"
-    assert app.upscale(factor=1.5)["chain"][-1] == "upscale"
-    assert app.silhouette_mask()["chain"][-1] == "silhouette_mask"
-    ln = app.draw_line(0, 0, 9, 9, color="red")
+    srv, s = app
+    srv.edit("run the transforms", session=s)
+    assert srv.key_background(bg="white", session=s)["chain"][-1] == "key_background"
+    assert srv.defringe(erode_px=1, session=s)["chain"][-1] == "defringe"
+    assert srv.trim_alpha(session=s)["chain"][-1] == "trim_alpha"
+    assert srv.crop(0, 0, 10, 10, session=s)["chain"][-1] == "crop"
+    assert srv.upscale(factor=1.5, session=s)["chain"][-1] == "upscale"
+    assert srv.silhouette_mask(session=s)["chain"][-1] == "silhouette_mask"
+    ln = srv.draw_line(0, 0, 9, 9, color="red", session=s)
     assert ln["line"]["to"] == [9, 9]
-    app.commit()
+    srv.commit(session=s)
 
 
 def test_draw_shape_gate_and_geometry(app):
+    srv, s = app
     with pytest.raises(ValueError):
-        app.draw_shape()                        # gated
-    app.edit("shape it")
-    st = app.draw_shape(shape="circle", x=10, y=10, width=6, height=6, color="red")
+        srv.draw_shape(session=s)                            # gated
+    srv.edit("shape it", session=s)
+    st = srv.draw_shape(shape="circle", x=10, y=10, width=6, height=6, color="red", session=s)
     assert st["drew"]["shape"] == "circle"
     assert "clipped" in st
+
+
+def test_session_cursor_advances_on_edits(app):
+    """The server owns the cursor (C5): committing a pixel edit advances the session's state_id."""
+    from defringe_ai.sessions import Sessions
+
+    srv, s = app
+    assert Sessions(srv.HOME).get(s)["state_id"] == "state_0"
+    srv.edit("mark it", session=s)
+    srv.mark([[5, 5]], session=s)
+    srv.commit(session=s)
+    assert Sessions(srv.HOME).get(s)["state_id"] == "state_1"   # cursor followed the new HEAD
 
 
 # --- derive: edge_detect + adaptive edge_detect_tune -----------------------
@@ -80,58 +116,62 @@ def test_draw_shape_gate_and_geometry(app):
 def test_edge_detect_makes_a_mask_overlay(app):
     from defringe_ai.board import Board
 
-    st = app.edge_detect(lo=50, hi=150)
+    srv, s = app
+    st = srv.edge_detect(lo=50, hi=150, session=s)
     assert st["head"] == 0 and st["chain"] == ["open"]        # image untouched — original stays HEAD
-    # the overlay is a VERSIONED layer snapshot, not a single-file flag
     from defringe_ai.registry import Registry
 
     assert os.path.exists(os.path.join(
-        Registry(app.HOME).dir_by_name("shark"), "overlay", "0000-edge → mask.png"))
-    a = Board(app.HOME).sync()["assets"]["shark"]
+        Registry(srv.HOME).dir_by_name("shark"), "overlay", "0000-edge → mask.png"))
+    a = Board(srv.HOME).sync()["assets"]["shark"]
     assert a["mask"]["edge"] is True and a["overlay_head"] == 0
-    Board(app.HOME).undo("shark")                            # image-level undo clears the overlay
-    a = Board(app.HOME).sync()["assets"]["shark"]
+    Board(srv.HOME).undo("shark")                            # image-level undo clears the overlay
+    a = Board(srv.HOME).sync()["assets"]["shark"]
     assert a["mask"]["edge"] is False and a["overlay_head"] == -1
 
 
-def test_edge_detect_no_workspace_raises(srv):
+def test_edge_detect_no_session_raises(srv):
     with pytest.raises(ValueError):
-        srv.edge_detect()                       # nothing open
+        srv.edge_detect()                       # nothing open, no session
 
 
 def test_edge_detect_tune_good_immediately(app):
     from defringe_ai.board import Board
 
-    start = app.edge_detect_tune()
+    srv, s = app
+    start = srv.edge_detect_tune(session=s)
     assert start.done is False and start.probe == 1
-    done = app.edge_detect_tune(verdict="good")
+    done = srv.edge_detect_tune(verdict="good", session=s)
     assert done.done is True
-    assert Workspace.active(app.HOME).status()["head"] == 0          # image untouched
-    assert Board(app.HOME).sync()["assets"]["shark"]["mask"]["edge"] is True
+    assert Workspace.active(srv.HOME).status()["head"] == 0          # image untouched
+    assert Board(srv.HOME).sync()["assets"]["shark"]["mask"]["edge"] is True
 
 
 def test_edge_detect_tune_two_more_converges(app):
-    app.edge_detect_tune()                      # start (probe 1)
-    app.edge_detect_tune(verdict="more")        # nos 1, probe 2
-    res = app.edge_detect_tune(verdict="more")  # nos 2 → commit
+    srv, s = app
+    srv.edge_detect_tune(session=s)                      # start (probe 1)
+    srv.edge_detect_tune(verdict="more", session=s)      # nos 1, probe 2
+    res = srv.edge_detect_tune(verdict="more", session=s)  # nos 2 → commit
     assert res.done is True and res.nos == 2
 
 
 def test_edge_detect_tune_reduce_caps_at_three_probes(app):
-    app.edge_detect_tune()                      # probe 1
-    app.edge_detect_tune(verdict="reduce")      # probe 2
-    app.edge_detect_tune(verdict="reduce")      # probe 3
-    res = app.edge_detect_tune(verdict="reduce")  # probe 4 > max → commit
+    srv, s = app
+    srv.edge_detect_tune(session=s)                      # probe 1
+    srv.edge_detect_tune(verdict="reduce", session=s)    # probe 2
+    srv.edge_detect_tune(verdict="reduce", session=s)    # probe 3
+    res = srv.edge_detect_tune(verdict="reduce", session=s)  # probe 4 > max → commit
     assert res.done is True
 
 
 def test_edge_detect_tune_bad_verdict_raises(app):
-    app.edge_detect_tune()
+    srv, s = app
+    srv.edge_detect_tune(session=s)
     with pytest.raises(ValueError):
-        app.edge_detect_tune(verdict="banana")
+        srv.edge_detect_tune(verdict="banana", session=s)
 
 
-def test_edge_detect_tune_no_workspace_raises(srv):
+def test_edge_detect_tune_no_session_raises(srv):
     with pytest.raises(ValueError):
         srv.edge_detect_tune()
 
@@ -139,26 +179,28 @@ def test_edge_detect_tune_no_workspace_raises(srv):
 # --- isolate flow ----------------------------------------------------------
 
 def test_seed_connect_isolate(app):
-    ms = app.seed([[2, 2], [18, 2], [18, 18], [2, 18]])
+    srv, s = app
+    ms = srv.seed([[2, 2], [18, 2], [18, 18], [2, 18]], session=s)
     assert ms.dots == 4
-    cm = app.connect()
+    cm = srv.connect(session=s)
     assert cm.outline >= 3
-    res = app.isolate()
+    res = srv.isolate(session=s)
     assert res.chain[-1] == "isolate"
-    # cutout: outside the polygon is transparent
-    img = Workspace.active(app.HOME).current_array()
+    img = Workspace.active(srv.HOME).current_array()
     assert img[0, 0, 3] == 0
 
 
 def test_outline_traces_matte_then_isolate(app):
     from defringe_ai import imageops as ops
+
+    srv, s = app
     # key the white ground → alpha now marks the dark square (the matte `outline` traces)
-    Workspace.active(app.HOME).apply("key_background", ops.Transform.key_background, {"bg": "white"})
-    ms = app.outline(epsilon=1.0)
+    Workspace.active(srv.HOME).apply("key_background", ops.Transform.key_background, {"bg": "white"})
+    ms = srv.outline(epsilon=1.0, session=s)
     assert ms.dots == 0 and ms.outline >= 3        # boundary from pixels, no seeds placed
-    b = app.Board(app.HOME).sync()
+    b = srv.Board(srv.HOME).sync()
     assert b["assets"]["shark"]["mask"]["outline"]  # landed in the same slot connect fills
-    res = app.isolate()                             # cuts the traced polygon
+    res = srv.isolate(session=s)                     # cuts the traced polygon
     assert res.chain[-1] == "isolate"
 
 
@@ -169,17 +211,16 @@ def _wipe_alpha(img):
 
 
 def test_outline_without_matte_raises(app):
-    # no subject in alpha → nothing traceable → a clear error, not a bogus outline
-    Workspace.active(app.HOME).apply("wipe_alpha", _wipe_alpha, {})
+    srv, s = app
+    Workspace.active(srv.HOME).apply("wipe_alpha", _wipe_alpha, {})
     with pytest.raises(ValueError):
-        app.outline()
+        srv.outline(session=s)
 
 
 def test_cutout_segments_subject(srv, tmp_path):
     import numpy as np
     from PIL import Image
 
-    # 80x80 scene: noisy blue ground + a red subject block → cutout should segment the block
     rng = np.random.default_rng(2)
     a = np.zeros((80, 80, 4), np.uint8)
     a[..., 3] = 255
@@ -188,15 +229,14 @@ def test_cutout_segments_subject(srv, tmp_path):
     a[26:54, 26:54, 2] = rng.integers(0, 40, (28, 28))
     p = tmp_path / "box.png"
     Image.fromarray(a, "RGBA").save(p)
-    srv.open_asset(str(p), name="box")
+    s = srv.open_asset(str(p), name="box")["session"]
 
-    res = srv.cutout(rect=[22, 22, 36, 36], iterations=3)
+    res = srv.cutout(rect=[22, 22, 36, 36], iterations=3, session=s)
     assert res.chain[-1] == "cutout"
     out = Workspace.active(srv.HOME).current_array()
     assert out[0, 0, 3] == 0            # outside the seed rect → transparent
     assert out[40, 40, 3] == 255        # subject centre kept
-    # undoable: reverting the pixel step restores the opaque original
-    srv.undo("box")
+    srv.undo(session=s)
     assert Workspace.active(srv.HOME).current_array()[0, 0, 3] == 255
 
 
@@ -212,63 +252,60 @@ def test_cutout_auto_rect_from_frame(srv, tmp_path):
     a[20:60, 20:60, 2] = rng.integers(0, 40, (40, 40))
     p = tmp_path / "box2.png"
     Image.fromarray(a, "RGBA").save(p)
-    srv.open_asset(str(p), name="box2")
-    # no rect + no seeds → falls back to the inset-frame seed box
-    res = srv.cutout()
+    s = srv.open_asset(str(p), name="box2")["session"]
+    res = srv.cutout(session=s)         # no rect + no seeds → inset-frame seed box
     assert res.chain[-1] == "cutout"
     assert (Workspace.active(srv.HOME).current_array()[..., 3] > 0).any()
 
 
 def test_isolate_without_outline_raises(app):
+    srv, s = app
     with pytest.raises(ValueError):
-        app.isolate()
+        srv.isolate(session=s)
 
 
 def test_clear_seeds(app):
-    app.seed([[2, 2], [18, 18]])
-    ms = app.clear_seeds()
+    srv, s = app
+    srv.seed([[2, 2], [18, 18]], session=s)
+    ms = srv.clear_seeds(session=s)
     assert ms.dots == 0
 
 
 # --- workspace controls ----------------------------------------------------
 
 def test_status_collapse_move_select_export(app, tmp_path):
-    assert app.status()["workspace"] == "shark"
-    app.edge_detect(lo=50, hi=150)
-    app.collapse()
-    assert app.status()["chain"] == ["collapsed"]
-    mv = app.move(30, 40, scale=1.5)
+    srv, s = app
+    assert srv.status(session=s)["workspace"] == "shark"
+    srv.edge_detect(lo=50, hi=150, session=s)
+    srv.collapse(session=s)
+    assert srv.status(session=s)["chain"] == ["collapsed"]
+    mv = srv.move(30, 40, scale=1.5, session=s)
     assert mv["placement"]["x"] == 30
-    sel = app.select()
+    sel = srv.select(session=s)
     assert sel["selected"] == "shark"
     dest = str(tmp_path / "out.png")
-    assert app.export(dest)["exported"] == dest
+    assert srv.export(dest, session=s)["exported"] == dest
 
 
 def test_redo_after_undo(app):
-    app.edit("mark it"); app.mark([[5, 5]]); app.commit()   # a real pixel step to undo/redo
-    app.undo()
-    app.redo()
-    assert app.status()["head"] == 1
-
-
-def test_move_with_no_active_workspace_does_not_crash(srv):
-    """`move` before anything is opened resolves to a blank name: it must not blow up on
-    `order.index('')` — it returns z=-1 and no placement."""
-    mv = srv.move(10, 20)
-    assert mv["z"] == -1 and mv["placement"] is None
+    srv, s = app
+    srv.edit("mark it", session=s); srv.mark([[5, 5]], session=s); srv.commit(session=s)
+    srv.undo(session=s)
+    srv.redo(session=s)
+    assert srv.status(session=s)["head"] == 1
 
 
 def test_reopen_under_new_name_keeps_board_state(srv, asset_png):
     """Resume-under-a-new-name renames the registry label; the board arrangement + mask must
-    follow the rename, not be dropped and re-seeded (the finding-#2 regression)."""
-    srv.open_asset(asset_png, name="a")
-    srv.move(500, 300)                                       # place it
-    srv.seed([[5, 5], [15, 15]])                            # and annotate it
-    srv.open_asset(asset_png, name="hero")                  # same path → resume, rename a→hero
-    assert srv.status()["workspace"] == "hero"
+    follow the rename, and the SAME session resumes (identity, not label, keys it)."""
+    s1 = srv.open_asset(asset_png, name="a")["session"]
+    srv.move(500, 300, session=s1)                          # place it
+    srv.seed([[5, 5], [15, 15]], session=s1)               # and annotate it
+    s2 = srv.open_asset(asset_png, name="hero")["session"]  # same path → resume, rename a→hero
+    assert s2 == s1                                         # one handle per asset (C6), across a rename
+    assert srv.status(session=s1)["workspace"] == "hero"
     ls = srv.list_workspaces()["workspaces"]
-    assert ls == ["hero"] and "a" not in ls                 # exactly one asset, under the new label
+    assert ls == ["hero"] and "a" not in ls                # exactly one asset, under the new label
     from defringe_ai.board import Board
     a = Board(srv.HOME).sync()["assets"]["hero"]
     assert a["x"] == 500 and a["y"] == 300                  # placement carried over
@@ -298,7 +335,7 @@ def test_free_port_exhausted(srv, monkeypatch):
         srv._free_port(5000)
 
 
-# --- CLI (main) ------------------------------------------------------------
+# --- CLI (main) — name-addressed (the local human debug loop, C1) -----------
 
 def _run(srv, monkeypatch, argv):
     monkeypatch.setattr("sys.argv", ["defringe-ai", *argv])

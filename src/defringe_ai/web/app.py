@@ -6,10 +6,14 @@ Routes:
   /              canvas.html (the edit screen)
   /static/*      canvas.css, canvas.js
   /api/events    SSE state stream (pushes only on change)
-  /api/move      POST {name,x?,y?,scale?}   persist a drag/resize
-  /api/select    POST {name}                select + bring to front
-  /img/{n}/{i}   the i-th history snapshot of asset n
+  /api/move      POST {session,x?,y?,scale?}   persist a drag/resize
+  /api/select    POST {session}                select + bring to front
+  /img/{s}/{i}   the i-th history snapshot of the asset behind session s
   /chains        the per-asset reversible edit chains
+
+The window is **session-addressed** end-to-end (Phase 2, C1/C2): every action names an opaque
+`session` id, resolved here to the asset — the same resolution path the MCP tools take, so the
+`/api/*` suite exercises the headless contract too. The asset's `name` is display-only.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from starlette.staticfiles import StaticFiles
 from ..board import Board
 from ..history import History
 from ..registry import Registry
+from ..sessions import Sessions
 from ..workspace import Workspace
 
 WEBDIR = os.path.dirname(__file__)
@@ -43,6 +48,26 @@ DIST = os.path.join(WEBDIR, "dist")  # the built Vite app (frontend/ → here); 
 def _dir(home: str, name: str) -> str | None:
     """An asset's storage directory by label, via the registry (None if unknown)."""
     return Registry(home).dir_by_name(name)
+
+
+def _session_for(home: str, name: str) -> str | None:
+    """The window's session handle for an asset — opened lazily and **resumed** thereafter
+    (C6), so the canvas mounts through the same session layer as the MCP tools. Idempotent, so
+    build_state can call it every SSE tick without churn. None if the label isn't registered."""
+    loc = Registry(home).locate(name)
+    if not loc:
+        return None
+    pid, aid = loc
+    return Sessions(home).open(pid, aid, name).id
+
+
+def _name_for(home: str, session: str) -> str | None:
+    """Resolve a `session` from an incoming request back to its asset label (None if unknown) —
+    the window's half of the server-owns-resolution contract."""
+    try:
+        return Sessions(home).name_of(session)
+    except (ValueError, KeyError):
+        return None
 
 
 # --- state (board arrangement + workspace edit heads) ----------------------
@@ -87,7 +112,8 @@ def build_state(home: str) -> list[dict]:
         sess = m.get("session", {})
         _hist = History.from_dict(a["history"]) if a.get("history") else History({}, "open")
         out.append({
-            "name": name, "x": a["x"], "y": a["y"], "scale": a["scale"], "z": z,
+            "name": name, "session": _session_for(home, name),
+            "x": a["x"], "y": a["y"], "scale": a["scale"], "z": z,
             "head": head, "steps": len(m["steps"]), "w": w, "h": h,
             "op": m["steps"][head]["op"], "selected": name == sel,
             "editing": bool(sess.get("active")), "intent": sess.get("intent", ""),
@@ -123,6 +149,7 @@ def _chains(home: str) -> str:
     for name in names:
         with open(os.path.join(_dir(home, name), "manifest.json")) as f:
             m = json.load(f)
+        sid = _session_for(home, name)                 # images are addressed by session now
         steps, head = m["steps"], m["head"]
         cards = []
         for i, st in enumerate(steps):
@@ -131,8 +158,8 @@ def _chains(home: str) -> str:
             cls = "head" if i == head else ("future" if i > head else "")
             cards.append(
                 f'<figure class="{cls}"><div class="swatches">'
-                f'<div class="swatch dark checker"><img src="/img/{name}/{i}"></div>'
-                f'<div class="swatch light checker"><img src="/img/{name}/{i}"></div>'
+                f'<div class="swatch dark checker"><img src="/img/{sid}/{i}"></div>'
+                f'<div class="swatch light checker"><img src="/img/{sid}/{i}"></div>'
                 f'</div><figcaption>{i:02d} {st["op"]}{" · HEAD" if i == head else ""}</figcaption></figure>')
         parts.append(f'<section class="ws"><h2>{name} <span class="meta">HEAD {head}/{len(steps)-1}'
                      f'</span></h2><div class="rowr">' + "".join(cards) + "</div></section>")
@@ -176,33 +203,39 @@ def build_app(home: str) -> Starlette:
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    def resolve(body, action: str) -> str | None:
+        """A request body's `session` → the asset label the board/workspace are keyed on, and
+        **log the resolution** so a live console shows which asset each window action addressed.
+        The session rides in the POST body (not the URL), so it's otherwise invisible in uvicorn's
+        access log — this is the window's half of the "server owns resolution" contract, made
+        watchable. Mirrors the `[session]` lines the engine emits on open/advance."""
+        name = _name_for(home, str(body.get("session", "")))
+        print(f"[session] {name or '(unknown)'} ← {action}", flush=True)
+        return name
+
     async def api_move(request):
         b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Board(home).place(name, x=b.get("x"), y=b.get("y"), scale=b.get("scale"))
+        Board(home).place(resolve(b, "move"), x=b.get("x"), y=b.get("y"), scale=b.get("scale"))
         return JSONResponse({"ok": True})
 
     async def api_select(request):
         b = await request.json()
-        Board(home).select(os.path.basename(str(b.get("name", ""))))
+        Board(home).select(resolve(b, "select"))
         return JSONResponse({"ok": True})
 
     async def api_lock(request):
         b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Board(home).lock(name, bool(b.get("locked")))
+        Board(home).lock(resolve(b, "lock" if b.get("locked") else "unlock"), bool(b.get("locked")))
         return JSONResponse({"ok": True})
 
     async def api_dot(request):
         b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Board(home).add_dot(name, b.get("x"), b.get("y"))
+        Board(home).add_dot(resolve(b, "dot"), b.get("x"), b.get("y"))
         return JSONResponse({"ok": True})
 
     async def api_dots_clear(request):
         b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Board(home).clear_dots(name)
+        Board(home).clear_dots(resolve(b, "clear dots"))
         return JSONResponse({"ok": True})
 
     async def api_isolate(request):
@@ -211,12 +244,12 @@ def build_app(home: str) -> Starlette:
         from ..imageops import Geometry
 
         body = await request.json()
-        name = os.path.basename(str(body.get("name", "")))
+        name = resolve(body, "isolate")
         bd = Board(home).sync()
         outline = bd.get("assets", {}).get(name, {}).get("mask", {}).get("outline", [])
         if len(outline) < 3:
             return JSONResponse({"ok": False, "error": "no outline — connect dots first"})
-        ws = Workspace.resolve(name, home)
+        ws = Workspace.locate(name, home)
         ws.begin_edit("isolate (fill mask)")
         ws.apply("isolate", Geometry.fill_polygon_alpha, {"polygon": outline})
         ws.commit_edit()
@@ -224,28 +257,26 @@ def build_app(home: str) -> Starlette:
         return JSONResponse({"ok": True})
 
     async def api_undo(request):
-        b = await request.json()
-        Board(home).undo(os.path.basename(str(b.get("name", ""))))
+        Board(home).undo(resolve(await request.json(), "undo"))
         return JSONResponse({"ok": True})
 
     async def api_redo(request):
-        b = await request.json()
-        Board(home).redo(os.path.basename(str(b.get("name", ""))))
+        Board(home).redo(resolve(await request.json(), "redo"))
         return JSONResponse({"ok": True})
 
     async def api_goto(request):
         """Jump the asset to a chosen point on its history timeline (dropdown select)."""
         b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Board(home).goto(name, int(b.get("index", 0)))
+        Board(home).goto(resolve(b, f"goto {b.get('index', 0)}"), int(b.get("index", 0)))
         return JSONResponse({"ok": True})
 
     async def api_reset(request):
         """Reset an asset: revert its pixels to the original open image, wipe its invisible
         mask layer (dots + outline), AND erase its per-image history — a clean slate."""
-        b = await request.json()
-        name = os.path.basename(str(b.get("name", "")))
-        Workspace.resolve(name, home).reset()
+        name = resolve(await request.json(), "reset")
+        if name is None:                                 # unknown/stale session → degrade like the siblings
+            return JSONResponse({"ok": False, "error": "unknown session"})
+        Workspace.locate(name, home).reset()
         Board(home).reset_history(name)
         return JSONResponse({"ok": True})
 
@@ -255,7 +286,7 @@ def build_app(home: str) -> Starlette:
         from ..imageops import Geometry
 
         body = await request.json()
-        name = os.path.basename(str(body.get("name", "")))
+        name = resolve(body, "connect")
         bd = Board(home).sync()
         dots = bd.get("assets", {}).get(name, {}).get("mask", {}).get("dots", [])
         Board(home).set_outline(name, Geometry.hull_snap(dots))
@@ -270,8 +301,8 @@ def build_app(home: str) -> Starlette:
         from ..imageops import Io, Transform
 
         body = await request.json()
-        name = os.path.basename(str(body.get("name", "")))
         op = str(body.get("op", ""))
+        name = resolve(body, f"derive:{op}")
         if name not in Board(home).sync().get("assets", {}):
             return JSONResponse({"ok": False, "error": "no such asset"})
 
@@ -283,7 +314,7 @@ def build_app(home: str) -> Starlette:
 
         if op == "edge":
             lo, hi = int(body.get("lo", 100)), int(body.get("hi", 200))
-            img = Workspace.resolve(name, home).current_array()
+            img = Workspace.locate(name, home).current_array()
             ov = transparent(Transform.edge_detect(img, lo, hi))
             Board(home).push_overlay(name, ov, "edge → mask")
             return JSONResponse({"ok": True})
@@ -315,9 +346,9 @@ def build_app(home: str) -> Starlette:
         return JSONResponse({"ok": True})
 
     async def mask_edge(request):
-        """Serve an asset's CURRENT mask-overlay version (the layer chain's HEAD). Falls
-        back to the legacy single-file overlay for assets predating the versioned chain."""
-        name = os.path.basename(request.path_params["name"])
+        """Serve an asset's CURRENT mask-overlay version (the layer chain's HEAD), addressed by
+        session. Falls back to the legacy single-file overlay for assets predating the chain."""
+        name = _name_for(home, request.path_params["session"])
         try:
             path = Workspace.locate(name, home).overlay_path()
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
@@ -331,7 +362,7 @@ def build_app(home: str) -> Starlette:
         return FileResponse(path)
 
     async def image(request):
-        name = os.path.basename(request.path_params["name"])
+        name = _name_for(home, request.path_params["session"])
         idx = int(request.path_params["idx"])
         try:
             d = _dir(home, name)
@@ -359,8 +390,8 @@ def build_app(home: str) -> Starlette:
         Route("/api/redo", api_redo, methods=["POST"]),
         Route("/api/history/goto", api_goto, methods=["POST"]),
         Route("/api/reset", api_reset, methods=["POST"]),
-        Route("/img/{name}/{idx:int}", image),
-        Route("/mask/{name}", mask_edge),
+        Route("/img/{session}/{idx:int}", image),
+        Route("/mask/{session}", mask_edge),
     ]
     # the built Vite bundle references /assets/*; only mount when it exists so an
     # unbuilt checkout still boots (index() then shows the "run pnpm build" hint).

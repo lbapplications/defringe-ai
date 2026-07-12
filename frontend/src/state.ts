@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 // The asset shape pushed by the Python server's build_state() over SSE. The backend is
 // unchanged by the frontend rewrite — this mirrors app.py's dict exactly.
 export type Asset = {
-  name: string;
+  name: string;         // human-readable display label — NEVER the addressing key
+  session: string;      // the opaque handle every action addresses the asset by (Phase 2, C2)
   x: number;
   y: number;
   scale: number;

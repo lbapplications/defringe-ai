@@ -12,23 +12,23 @@ type Props = {
   // Optimistic scale held during a resize gesture until the server echoes it back over SSE
   // (see Canvas). When set it overrides a.scale so the image doesn't snap back and wait.
   scaleOverride?: number;
-  onSelect: (name: string) => void;
-  nodeRef: (name: string, node: Konva.Group | null) => void;
+  onSelect: (session: string) => void;
+  nodeRef: (session: string, node: Konva.Group | null) => void;
 };
 
 // One board asset: the image plus its mask overlay (seed dots + derived outline), all in
 // one Konva Group. The group carries position; the image is drawn at its display size and
 // mask geometry is mapped image-space -> display-space so dots/outline ride with it.
 export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, onSelect, nodeRef }: Props) {
-  const [image] = useImage(`/img/${a.name}/${a.head}?v=${encodeURIComponent(a.rev)}`);
+  const [image] = useImage(`/img/${a.session}/${a.head}?v=${encodeURIComponent(a.rev)}`);
   // The edge-map overlay (green edges on transparency) rides on top under the mask view.
-  const [edgeImage] = useImage(a.edge ? `/mask/${a.name}?v=${encodeURIComponent(a.edge_rev)}` : "");
+  const [edgeImage] = useImage(a.edge ? `/mask/${a.session}?v=${encodeURIComponent(a.edge_rev)}` : "");
   const groupRef = useRef<Konva.Group>(null);
 
   useEffect(() => {
-    nodeRef(a.name, groupRef.current);
-    return () => nodeRef(a.name, null);
-  }, [a.name, nodeRef]);
+    nodeRef(a.session, groupRef.current);
+    return () => nodeRef(a.session, null);
+  }, [a.session, nodeRef]);
 
   const s = dispScale(a, scaleOverride ?? a.scale);
   const dispW = a.w * s;
@@ -44,18 +44,18 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
     const x = Math.round(p.x / s);
     const y = Math.round(p.y / s);
     if (x < 0 || y < 0 || x > a.w || y > a.h) return;
-    if (!a.selected) post("/api/select", { name: a.name });
-    post("/api/dot", { name: a.name, x, y });
+    if (!a.selected) post("/api/select", { session: a.session });
+    post("/api/dot", { session: a.session, x, y });
     e.cancelBubble = true;
   }
 
   function onClick(e: Konva.KonvaEventObject<MouseEvent>) {
     if (tool === "dot") return placeDot(e);
-    post("/api/select", { name: a.name });
+    post("/api/select", { session: a.session });
   }
 
   function onDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
-    post("/api/move", { name: a.name, x: Math.round(e.target.x()), y: Math.round(e.target.y()) });
+    post("/api/move", { session: a.session, x: Math.round(e.target.x()), y: Math.round(e.target.y()) });
   }
 
   return (
@@ -64,7 +64,7 @@ export default function AssetNode({ a, tool, showImg, showMask, scaleOverride, o
       x={a.x}
       y={a.y}
       draggable={draggable}
-      onMouseDown={() => onSelect(a.name)}
+      onMouseDown={() => onSelect(a.session)}
       onClick={onClick}
       onTap={onClick}
       onDragEnd={onDragEnd}

@@ -33,9 +33,9 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const registerNode = useCallback((name: string, node: Konva.Group | null) => {
-    if (node) nodes.current.set(name, node);
-    else nodes.current.delete(name);
+  const registerNode = useCallback((session: string, node: Konva.Group | null) => {
+    if (node) nodes.current.set(session, node);
+    else nodes.current.delete(session);
   }, []);
 
   const selected = assets.find((a) => a.selected) || null;
@@ -46,7 +46,7 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
-    const node = selected && tool === "move" && !selected.locked ? nodes.current.get(selected.name) : null;
+    const node = selected && tool === "move" && !selected.locked ? nodes.current.get(selected.session) : null;
     tr.nodes(node ? [node] : []);
     tr.forceUpdate();
     tr.getLayer()?.batchDraw();
@@ -57,9 +57,9 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
     setOptScale((m) => {
       let next = m;
       for (const a of assets) {
-        if (a.name in m && Math.abs(a.scale - m[a.name]) < 1e-3) {
+        if (a.session in m && Math.abs(a.scale - m[a.session]) < 1e-3) {
           if (next === m) next = { ...m };
-          delete next[a.name];
+          delete next[a.session];
         }
       }
       return next;
@@ -74,14 +74,14 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
     const scaleX = node.scaleX();
     node.scaleX(1);
     node.scaleY(1);
-    const base = optScale[a.name] ?? a.scale;
+    const base = optScale[a.session] ?? a.scale;
     const next = Math.max(0.15, Math.min(8, base * scaleX));
-    setOptScale((m) => ({ ...m, [a.name]: next }));
-    post("/api/move", { name: a.name, scale: next });
+    setOptScale((m) => ({ ...m, [a.session]: next }));
+    post("/api/move", { session: a.session, scale: next });
   }
 
   function onBackgroundClick(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (e.target === e.target.getStage()) post("/api/select", { name: "" });
+    if (e.target === e.target.getStage()) post("/api/select", { session: "" });
   }
 
   return (
@@ -92,13 +92,13 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
             .sort((p, q) => p.z - q.z)
             .map((a) => (
               <AssetNode
-                key={a.name}
+                key={a.session}
                 a={a}
                 tool={tool}
                 showImg={showImg}
                 showMask={showMask}
-                scaleOverride={optScale[a.name]}
-                onSelect={(name) => post("/api/select", { name })}
+                scaleOverride={optScale[a.session]}
+                onSelect={(session) => post("/api/select", { session })}
                 nodeRef={registerNode}
               />
             ))}
@@ -110,7 +110,7 @@ export default function Canvas({ assets, tool, showImg, showMask }: Props) {
             boundBoxFunc={(oldBox, newBox) => (newBox.width < 30 ? oldBox : newBox)}
             onTransformEnd={(e) => {
               const g = e.target as Konva.Group;
-              const a = assets.find((x) => nodes.current.get(x.name) === g);
+              const a = assets.find((x) => nodes.current.get(x.session) === g);
               if (a) onTransformEnd(a, g);
             }}
           />

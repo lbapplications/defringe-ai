@@ -19,8 +19,8 @@ export default function App() {
       e.preventDefault();
       const a = assets.find((x) => x.selected);
       if (!a) return;
-      if (e.shiftKey && a.can_redo) post("/api/redo", { name: a.name });
-      else if (!e.shiftKey && a.can_undo) post("/api/undo", { name: a.name });
+      if (e.shiftKey && a.can_redo) post("/api/redo", { session: a.session });
+      else if (!e.shiftKey && a.can_undo) post("/api/undo", { session: a.session });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

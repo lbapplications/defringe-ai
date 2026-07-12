@@ -5,7 +5,7 @@ import { baseW, dispScale, post, useBoard, type Asset } from "./state";
 
 function asset(over: Partial<Asset> = {}): Asset {
   return {
-    name: "a", x: 0, y: 0, scale: 1, z: 0, head: 0, steps: 1, w: 100, h: 50,
+    name: "a", session: "s-a", x: 0, y: 0, scale: 1, z: 0, head: 0, steps: 1, w: 100, h: 50,
     op: "open", selected: false, editing: false, intent: "", rev: "0-1",
     locked: false, dots: [], outline: [], edge: false, edge_rev: "",
     can_undo: false, can_redo: false, timeline: [], ...over,
@@ -40,11 +40,11 @@ describe("post", () => {
   it("POSTs JSON with the right headers", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
     vi.stubGlobal("fetch", fetchMock);
-    await post("/api/move", { name: "a", x: 1 });
+    await post("/api/move", { session: "s-a", x: 1 });
     expect(fetchMock).toHaveBeenCalledWith("/api/move", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "a", x: 1 }),
+      body: JSON.stringify({ session: "s-a", x: 1 }),
     });
     vi.unstubAllGlobals();
   });

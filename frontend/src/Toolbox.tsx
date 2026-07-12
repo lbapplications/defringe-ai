@@ -25,8 +25,8 @@ export default function Toolbox({
 }: Props) {
   const a = assets.find((x) => x.selected) || null;
   const dots = a ? a.dots.length : 0;
-  const act = (url: string) => a && post(url, { name: a.name });
-  const derive = (op: string, params: object) => a && post("/api/derive", { name: a.name, op, ...params });
+  const act = (url: string) => a && post(url, { session: a.session });
+  const derive = (op: string, params: object) => a && post("/api/derive", { session: a.session, op, ...params });
   // Derive-tool slider params — adjust, then click the op to apply with these values.
   const [lo, setLo] = useState(100);
   const [hi, setHi] = useState(200);
@@ -67,7 +67,7 @@ export default function Toolbox({
           <button
             className={"wide-btn" + (a?.locked ? " on" : "")}
             disabled={!a}
-            onClick={() => a && post("/api/lock", { name: a.name, locked: !a.locked })}
+            onClick={() => a && post("/api/lock", { session: a.session, locked: !a.locked })}
           >
             {a?.locked ? "🔒 Unlock image" : "🔓 Lock image"}
           </button>
@@ -86,7 +86,7 @@ export default function Toolbox({
             className="history-select"
             disabled={!a || timeline.length === 0}
             value={headIdx}
-            onChange={(e) => a && post("/api/history/goto", { name: a.name, index: Number(e.target.value) })}
+            onChange={(e) => a && post("/api/history/goto", { session: a.session, index: Number(e.target.value) })}
           >
             {timeline.map((t, i) =>
               t.startsWith("~ ") ? null : (
