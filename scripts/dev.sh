@@ -10,7 +10,7 @@
 #   ./scripts/dev.sh           # build the frontend, run the server (serves web/dist)
 #   ./scripts/dev.sh --dev     # run the server + Vite dev server (HMR) on :47825
 #   ./scripts/dev.sh --server  # server only — skip the frontend build
-#   ./scripts/dev.sh --watch   # live testing: Vite HMR + auto-restart the server on .py edits
+#   ./scripts/dev.sh --reset   # (modifier) remount inputs/*.png from scratch first, then serve
 set -euo pipefail
 
 # Anchor to the repo root (this script lives in <root>/scripts) so uv, workspace/,
@@ -27,20 +27,22 @@ WEB_LOG="$LOG_DIR/web.log"
 # The server keys its on-disk state off DEFRINGE_HOME; pin it to the repo's workspace/.
 export DEFRINGE_HOME="$ROOT/workspace"
 
-MODE=default   # default (build+dist) | dev (server+Vite HMR) | watch (dev+server auto-restart) | server (no build)
+MODE=default   # default (build+dist) | dev (server+Vite HMR) | server (no build)
+RESET=0        # --reset modifier: remount inputs/*.png from scratch before serving
 for arg in "$@"; do
   case "$arg" in
     --dev)     MODE=dev ;;
     --server)  MODE=server ;;
-    --watch)   MODE=watch ;;
+    --reset)   RESET=1 ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
-    *) echo "usage: $0 [--dev|--server|--watch]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--dev|--server] [--reset]" >&2; exit 2 ;;
   esac
 done
 
-# Vite HMR runs for the interactive modes (dev + watch); watch additionally auto-restarts
-# the Python server on .py edits (see the server section below).
-if [ "$MODE" = dev ] || [ "$MODE" = watch ]; then VITE=1; else VITE=0; fi
+# Vite HMR runs only for --dev. (The old --watch mode auto-restarted the Python server on .py
+# edits; that's dropped — the SSE build stamp already auto-reloads open tabs when the server
+# comes back with new code, and the process relaunch is handled outside dev.sh.)
+if [ "$MODE" = dev ]; then VITE=1; else VITE=0; fi
 
 mkdir -p "$LOG_DIR"
 
@@ -89,6 +91,34 @@ cleanup() {
 }
 trap cleanup INT TERM
 
+# --- reset (optional) -------------------------------------------------------
+# --reset gives a clean, projectable board for testing: wipe the runtime edit state and
+# remount the source art from scratch. We mount COPIES in a gitignored live/ — projection
+# (merge / live C7) overwrites whatever file it's pointed at, so the pristine inputs/ must
+# never be the mount target. CLI `open` now also board-selects, so each copy lands on the
+# window board as a real-file-backed (projectable) asset.
+if [ "$RESET" = 1 ]; then
+  echo "» --reset: remounting inputs/*.png from scratch"
+  # 1. wipe workspace/ runtime state, keeping only the tracked .gitkeep.
+  find "$ROOT/workspace" -mindepth 1 -not -name .gitkeep -delete 2>/dev/null || true
+  # 2. copy source art → gitignored live/ (inputs/ stays pristine).
+  rm -rf "$ROOT/live"; mkdir -p "$ROOT/live"
+  shopt -s nullglob
+  srcs=("$ROOT"/inputs/*.png)
+  if [ ${#srcs[@]} -eq 0 ]; then
+    echo "  (no inputs/*.png found — nothing to remount)"
+  else
+    for src in "${srcs[@]}"; do cp "$src" "$ROOT/live/"; done
+    # 3. mount + board-select each copy (drives the engine directly; no server needed).
+    for img in "$ROOT"/live/*.png; do
+      echo "  mounting $(basename "$img")"
+      uv run defringe-ai open "$img" >/dev/null
+    done
+    echo "» reset complete — ${#srcs[@]} asset(s) mounted, workspace/ clean"
+  fi
+  shopt -u nullglob
+fi
+
 # --- frontend ---------------------------------------------------------------
 # default mode serves the BUILT bundle from web/dist; dev mode runs Vite HMR instead.
 if [ "$MODE" != server ] && [ ! -d "$ROOT/frontend/node_modules" ]; then
@@ -104,21 +134,11 @@ fi
 free_port "$MCP_PORT" MCP
 free_port "$PREVIEW_PORT" "edit screen"
 : > "$SERVER_LOG"
-if [ "$MODE" = watch ]; then
-  echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit) — auto-restart on .py edits  (log: $SERVER_LOG)"
-  # watchfiles reruns the whole `serve` process on any Python change under src/. It
-  # kills-and-waits (SIGKILL after --sigint-timeout) before relaunching, so the server
-  # fully releases its sockets and _free_port rebinds :47823/:47824 every time — the edit
-  # screen never drifts to another port. Frontend edits are handled by Vite HMR, not this.
-  uv run watchfiles --target-type command --filter python --sigint-timeout 3 \
-    "uv run defringe-ai serve --http --preview" src >>"$SERVER_LOG" 2>&1 &
-else
-  echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit)  (log: $SERVER_LOG)"
-  uv run defringe-ai serve --http --preview >>"$SERVER_LOG" 2>&1 &
-fi
+echo "» starting server on :$MCP_PORT (MCP) + :$PREVIEW_PORT (edit)  (log: $SERVER_LOG)"
+uv run defringe-ai serve --http --preview >>"$SERVER_LOG" 2>&1 &
 PIDS+=("$!")
 
-# --- Vite dev server (HMR) in --dev / --watch -------------------------------
+# --- Vite dev server (HMR) in --dev -----------------------------------------
 if [ "$VITE" = 1 ]; then
   free_port "$VITE_PORT" "Vite dev"
   echo "» starting Vite dev on :$VITE_PORT (HMR, proxies /api + /img → :$PREVIEW_PORT)  (log: $WEB_LOG)"

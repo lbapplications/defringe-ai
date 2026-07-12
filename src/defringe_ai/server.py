@@ -154,7 +154,12 @@ def main() -> None:
     HOME = core.HOME
 
     if args.cmd == "open":
-        _print(Workspace.open_asset(args.path, HOME, args.name or None).status())
+        ws = Workspace.open_asset(args.path, HOME, args.name or None)
+        st = ws.status()
+        if ws.renamed_from:                          # resume renamed the label — carry board state over
+            Board(HOME).rename(ws.renamed_from, st["workspace"])
+        Board(HOME).select(st["workspace"])          # land it selected on the board, like the MCP tool
+        _print(st)
     elif args.cmd == "ls":
         active = _get_active(HOME)
         for w in Workspace.list_all(HOME):

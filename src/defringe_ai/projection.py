@@ -31,7 +31,7 @@ from .registry import Registry
 
 
 def _log(msg: str) -> None:
-    """One greppable ``[project]`` line to the server console — so a live ``--watch`` run *shows*
+    """One greppable ``[project]`` line to the server console — so a live server run *shows*
     the only irreversible writes landing (mirrors the ``[session]`` lines the session layer emits)."""
     print(f"[project] {msg}", flush=True)
 

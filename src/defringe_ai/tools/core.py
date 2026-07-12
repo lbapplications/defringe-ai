@@ -14,7 +14,7 @@ tool names its target with an opaque ``session`` id (minted by ``open_asset``), 
 resolves it — ``session → (project_id, asset_id) → name`` — then drives the still-name-keyed
 board/workspace under it. The old "omit it and act on the last one touched" sugar is gone; a
 blank/unknown session is a loud, guided error. The server also **owns the cursor**: every applied
-edit advances the session (:func:`advance`), so ``--watch`` shows the session layer working.
+edit advances the session (:func:`advance`), so the live server log shows the session layer working.
 """
 
 from __future__ import annotations

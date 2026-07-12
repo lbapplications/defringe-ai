@@ -26,7 +26,7 @@ the board/workspace key, and the session resolves *to* it. That keeps this a thi
 cursor layer, not a rewrite of the engine below it.
 
 Opening the same asset twice **resumes** its working session (C6) rather than minting a second —
-one live handle per asset. The server logs every open/resume/advance so a live ``--watch`` run
+one live handle per asset. The server logs every open/resume/advance so a live server run
 shows the session layer working.
 """
 
@@ -52,7 +52,7 @@ class Session:
 
 
 def _log(msg: str) -> None:
-    """One greppable line to the server console — so a live ``--watch`` run *shows* the
+    """One greppable line to the server console — so a live server run *shows* the
     session layer working (open/resume/advance), which is otherwise invisible headless."""
     print(f"[session] {msg}", flush=True)
 

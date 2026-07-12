@@ -350,6 +350,16 @@ def test_cli_open_status_ls(srv, monkeypatch, asset_png, capsys):
     assert "[a]" in out and "a" in out
 
 
+def test_cli_open_board_selects(srv, monkeypatch, asset_png):
+    """CLI `open` lands the asset selected on the board — like the MCP tool, so `dev.sh --reset`
+    (which loops `open`) leaves each remounted asset on the window board."""
+    from defringe_ai.board import Board
+    _run(srv, monkeypatch, ["open", asset_png, "--name", "a"])
+    b = Board(srv.HOME)._read()
+    assert b["selected"] == "a"        # landed selected, like the MCP open_asset tool
+    assert "a" in b["assets"]          # and placed on the board
+
+
 def test_cli_edit_mark_commit_undo_redo(srv, monkeypatch, asset_png, capsys):
     _run(srv, monkeypatch, ["open", asset_png, "--name", "a"])
     _run(srv, monkeypatch, ["edit", "mark it", "a"])

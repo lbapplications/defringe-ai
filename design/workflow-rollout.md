@@ -47,7 +47,7 @@ the canvas through the same mount/session layer.**
 
 **Why second:** sessions sit on identity; the canvas can only share the path once the path exists.
 Landing the canvas here is deliberate — from this point the existing `TestClient` `/api/*` tests
-exercise the headless contract *for free*, and the live `--watch` window becomes a watchable
+exercise the headless contract *for free*, and the live server window becomes a watchable
 integration test for Phase 3.
 
 **Decision (made 2026-07-11): fully session-addressed.** The window carries no ambient "current
@@ -62,7 +62,7 @@ human-readable display field, never as the addressing key.
   `sessions.json` (ledger); `open` mints/**resumes** one handle per asset (keyed on identity, not the
   mutable label, so it survives a rename); `name_of` resolves live through the registry; `advance` is
   the server-owned cursor (`state_<head>` + `mask_<overlay_head>.png`). Every open/resume/advance
-  **logs** `[session] …` so a live `--watch` run *shows* the layer working.
+  **logs** `[session] …` so a live server run *shows* the layer working.
 - `tools/core.py` — session-addressed resolution (`open_session`, `name`, `workspace`, `advance`,
   gated `apply`); no ambient fallback — a blank/unknown session is a guided error.
 - All tool modules swapped `workspace:str` → `session:str`; `open_asset` returns `session`;
@@ -114,7 +114,7 @@ you *watch* each projection land.
 - **Projection rides the existing choke points**, no new call sites: `tools.core.advance` (MCP) and the
   `web/app.py` `advance()` closure (window) each already fire once per state change (C5 cursor) — both
   now also project (C7). Best-effort: a stale session / missing file can't fail an edit (backups are the
-  safety net, not withholding the write). Every projection/merge logs a `[project]` line for `--watch`.
+  safety net, not withholding the write). Every projection/merge logs a `[project]` line for the live server console.
 - **New `merge` taxonomy category** (`tools/merge.py`): `merge(session)` (approval commit) +
   `revert_merge(commit, session)` (cross-merge navigation), Pydantic `MergeResult`. CLI `merge` /
   `revert_merge` (name-addressed, like the rest of the CLI). README + nomenclature ledger (`projection`

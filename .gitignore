@@ -22,6 +22,9 @@ inputs/*
 !inputs/.gitkeep
 workspace/*
 !workspace/.gitkeep
+# dev.sh --reset mounts COPIES of inputs/*.png here (projection overwrites its target, so
+# the source art is never the mount) — pure runtime scratch, never committed.
+live/
 out/
 logs/
 *.tmp.png
